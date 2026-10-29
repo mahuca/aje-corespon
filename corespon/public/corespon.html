@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#1b242d">
+  <meta name="description" content="Ajedrez por correspondencia 1v1 con plazos de días. Sin trampas, servidor autoritativo.">
+  <title>Aje-Corespon · Ajedrez por correspondencia</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/corespon" aria-label="Aje-Corespon, inicio">
+      <span class="brand-icon" aria-hidden="true">♟</span>
+      <span class="brand-text">Aje-<strong>Corespon</strong></span>
+    </a>
+    <div class="header-note">2 días por jugada · WhatsApp</div>
+  </header>
+
+  <main>
+    <!-- ==================== LOBBY ==================== -->
+    <section id="lobbyScreen" class="screen lobby" aria-labelledby="lobbyTitle">
+      <div class="hero">
+        <p class="eyebrow">Correspondencia · 2 días por jugada</p>
+        <h1 id="lobbyTitle">Tu partida,<br><em>a tu ritmo.</em></h1>
+        <p class="hero-text">
+          Crea una sala y juega con plazos de días. Amplía el tiempo si lo
+          necesitas y recibe recordatorios por WhatsApp. El servidor valida
+          cada jugada: nada de trampas.
+        </p>
+        <ul class="features" aria-label="Características">
+          <li><span aria-hidden="true">♟</span> Plazos de días</li>
+          <li><span aria-hidden="true">⏰</span> WhatsApp</li>
+          <li><span aria-hidden="true">♞</span> Sin registro</li>
+          <li><span aria-hidden="true">♚</span> Revanchas</li>
+        </ul>
+        <p class="hero-link">
+          ¿Quieres un juego rápido? <a href="/">Juega 1v1 en tiempo real →</a>
+        </p>
+      </div>
+
+      <div class="lobby-card">
+        <h2>Crear partida</h2>
+        <div class="field">
+          <label for="playerName">Tu nombre</label>
+          <select id="playerName" aria-describedby="nameHint">
+            <option value="">— Elige tu nombre —</option>
+          </select>
+          <p id="nameHint" class="hint">Juega con tu nombre de la lista.</p>
+        </div>
+
+        <div class="field">
+          <label for="rivalName">Rival</label>
+          <select id="rivalName" aria-describedby="rivalHint">
+            <option value="">— Elige al rival —</option>
+          </select>
+          <p id="rivalHint" class="hint">El rival recibirá una invitación por WhatsApp.</p>
+        </div>
+
+        <button id="createBtn" class="btn btn-primary btn-lg" type="button" disabled>
+          <span>Crear sala</span>
+          <span class="btn-arrow" aria-hidden="true">→</span>
+        </button>
+
+        <div id="lobbyError" class="message message-error" role="alert" hidden></div>
+
+        <div class="divider"><span>— o unirse a una sala —</span></div>
+
+        <form id="joinForm" class="join-form" novalidate>
+          <label class="sr-only" for="codeInput">Código de sala</label>
+          <input id="codeInput" class="code-input" type="text" inputmode="text"
+                 maxlength="6" placeholder="ABC123" autocomplete="off"
+                 autocapitalize="characters" spellcheck="false">
+          <select id="joinName" aria-label="Tu nombre">
+            <option value="">Mi nombre</option>
+          </select>
+          <button id="joinBtn" class="btn btn-secondary" type="submit">Entrar</button>
+        </form>
+      </div>
+
+      <section id="partidasSection" aria-labelledby="partidasTitle">
+        <h2 id="partidasTitle">Partidas abiertas</h2>
+        <div id="partidasList" class="partidas-list" aria-live="polite">
+          <p class="empty">No hay partidas abiertas en este momento.</p>
+        </div>
+      </section>
+
+      <section id="clasificacionSection" aria-labelledby="clasificacionTitle">
+        <h2 id="clasificacionTitle">Clasificación</h2>
+        <div id="clasificacionList" class="clasificacion-list">
+          <p class="empty">Cargando clasificación…</p>
+        </div>
+      </section>
+    </section>
+
+    <!-- ==================== PARTIDA ==================== -->
+    <section id="gameScreen" class="screen game" aria-labelledby="gameTitle" hidden>
+      <h1 id="gameTitle" class="sr-only">Partida de ajedrez por correspondencia</h1>
+
+      <div class="game-top">
+        <div class="room-info">
+          <span class="room-label">Sala</span>
+          <strong id="roomCode" class="room-code">------</strong>
+          <button id="copyBtn" class="icon-btn" type="button"
+                  title="Copiar enlace de invitación" aria-label="Copiar enlace de invitación">
+            <span aria-hidden="true">⧉</span>
+          </button>
+        </div>
+        <div class="game-actions">
+          <span id="connectionBadge" class="connection-badge" title="Estado de la conexión">
+            <span class="dot" aria-hidden="true"></span>
+            <span id="connectionText">En línea</span>
+          </span>
+          <button id="flipBtn" class="btn btn-ghost btn-sm" type="button"
+                  title="Girar el tablero">⟲ Girar</button>
+          <button id="leaveBtn" class="btn btn-danger-ghost btn-sm" type="button">Salir</button>
+        </div>
+      </div>
+
+      <!-- Tarjeta de plazo de correspondencia -->
+      <div id="plazoCard" class="plazo-card" hidden>
+        <div class="plazo-info">
+          <span id="plazoIcon" class="plazo-icon" aria-hidden="true">⏰</span>
+          <div class="plazo-details">
+            <strong id="plazoStatus">Tu turno</strong>
+            <span id="plazoText">Plazo hasta…</span>
+          </div>
+          <button id="extendBtn" class="btn btn-ghost btn-sm" type="button" disabled>
+            Ampliar +1 día
+          </button>
+        </div>
+      </div>
+
+      <p id="spectatorNote" class="spectator-note" hidden>
+        <span aria-hidden="true">👁</span>
+        Estás mirando la partida como espectador. No puedes mover.
+      </p>
+
+      <div class="players">
+        <div id="topPlayer" class="player-bar">
+          <div class="player-identity">
+            <span id="topColor" class="player-color" aria-hidden="true">♚</span>
+            <span id="topName" class="player-name">Esperando rival…</span>
+            <span id="topTag" class="player-tag">Rival</span>
+          </div>
+          <div id="topCaptured" class="captured" aria-label="Capturas del rival"></div>
+          <div id="topMaterial" class="material" aria-live="polite"></div>
+        </div>
+
+        <div class="board-shell">
+          <div id="board" class="chessboard" role="grid" aria-label="Tablero de ajedrez"></div>
+
+          <div id="waitingOverlay" class="board-overlay" hidden>
+            <div class="overlay-card">
+              <p class="overlay-kicker">Sala creada</p>
+              <h2>Esperando rival</h2>
+              <p>Comparte este código o el enlace de invitación:</p>
+              <div id="waitingCode" class="waiting-code">------</div>
+              <button id="waitingCopyBtn" class="btn btn-primary" type="button">
+                Copiar enlace
+              </button>
+              <p class="overlay-foot">La partida empezará en cuanto alguien entre.</p>
+            </div>
+          </div>
+
+          <div id="promotionOverlay" class="board-overlay" hidden>
+            <div class="overlay-card">
+              <p class="overlay-kicker">Peón coronado</p>
+              <h2>Elige la pieza</h2>
+              <div id="promotionRow" class="promotion-row" role="group" aria-label="Pieza de promoción"></div>
+              <button id="cancelPromotionBtn" class="btn btn-ghost btn-sm promotion-cancel" type="button">
+                Cancelar
+              </button>
+            </div>
+          </div>
+
+          <div id="resultOverlay" class="board-overlay" hidden>
+            <div class="overlay-card result-card">
+              <p id="resultKicker" class="overlay-kicker">Fin de la partida</p>
+              <h2 id="resultTitle">Jaque mate</h2>
+              <p id="resultText"></p>
+              <div class="result-actions">
+                <button id="rematchBtn" class="btn btn-primary" type="button">Revancha</button>
+                <button id="resultLeaveBtn" class="btn btn-ghost" type="button">Salir</button>
+              </div>
+              <p id="rematchNote" class="rematch-note" hidden></p>
+            </div>
+          </div>
+        </div>
+
+        <div id="bottomPlayer" class="player-bar">
+          <div class="player-identity">
+            <span id="bottomColor" class="player-color" aria-hidden="true">♔</span>
+            <span id="bottomName" class="player-name">Tú</span>
+            <span id="bottomTag" class="player-tag">Tú</span>
+          </div>
+          <div id="bottomCaptured" class="captured" aria-label="Tus capturas"></div>
+          <div id="bottomMaterial" class="material" aria-live="polite"></div>
+        </div>
+      </div>
+
+      <div class="game-status">
+        <p id="statusText" class="status-text" aria-live="polite">Conectando…</p>
+        <div class="move-list-wrap">
+          <div id="moveList" class="move-list" aria-label="Jugadas de la partida"></div>
+          <p id="timeSummary" class="time-summary" hidden></p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <span>Ajedrez por correspondencia · Sin cuentas</span>
+    <span>Servidor autoritativo · Reglas completas</span>
+  </footer>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/shared/engine.js"></script>
+  <script src="/online-core.js"></script>
+  <script src="/corespon.js"></script>
+</body>
+</html>

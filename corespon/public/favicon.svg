@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Ajedrez">
+  <rect width="64" height="64" rx="14" fill="#1a1a1a"/>
+  <rect x="2" y="2" width="60" height="60" rx="12" fill="none" stroke="#f0c75e" stroke-opacity=".45" stroke-width="2"/>
+  <text x="32" y="48" text-anchor="middle" font-family="Georgia, serif" font-size="42" fill="#f0c75e">♞</text>
+</svg>

@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: aje-corespon
+    env: node
+    buildCommand: "cd corespon && npm install"
+    startCommand: "cd corespon && node server.js"
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: PORT
+        value: "3001"
+      - key: DATABASE_URL
+        sync: false
+      - key: WHATSAPP_PROVIDER
+        value: "meta"
+      - key: WHATSAPP_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_ID
+        sync: false

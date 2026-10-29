@@ -1,0 +1,548 @@
+'use strict';
+
+/*
+ * Servidor de ajedrez por correspondencia.
+ *
+ * Flujo de una jugada:
+ *  1. El cliente envía `corespon:move` con origen, destino y pieza de promoción.
+ *  2. El servidor valida que es el turno del jugador y que la jugada es legal
+ *     con el motor `shared/engine.js`.
+ *  3. Si es legal, actualiza el estado, guarda el PGN en la base de datos,
+ *     avanza el plazo y emite `corespon:room:update` a toda la sala.
+ *  4. Si caduca el plazo sin jugada → derrota por tiempo.
+ */
+
+const path = require('path');
+const http = require('http');
+const crypto = require('crypto');
+const express = require('express');
+const { Server } = require('socket.io');
+const engine = require('../shared/engine');
+const { RoomManager, Room, normalizeCode, sameName, PLAZO_DEFAULT_MS, GRACIA_DEFAULT_MS, MAX_PRORROGAS, buildPgn } = require('./rooms');
+const { createStore } = require('./db');
+const {
+  getGateway, INVITACION, TURNO, RECORDATORIO, PRORROGA, TIEMPO, FIN,
+  invitacionMsg, turnoMsg, recordatorioMsg, prorrogaMsg, tiempoMsg, finMsg
+} = require('./whatsapp');
+
+const CLEANUP_INTERVAL_MS = 60 * 1000;
+const CHECK_DEADLINE_MS = 60 * 1000;
+const CHECK_RECORDATORIO_MS = 30 * 60 * 1000;
+
+function getHost(req) {
+  const proto = req.protocol || 'http';
+  const host = req.get('host') || 'localhost:3001';
+  return `${proto}://${host}`;
+}
+
+function createServer(options = {}) {
+  const quiet = !!options.quiet;
+  const log = (...args) => {
+    if (!quiet) console.log('[corespon]', ...args);
+  };
+
+  const app = express();
+  const server = http.createServer(app);
+  const io = new Server(server, {
+    pingInterval: 30000,
+    pingTimeout: 25000,
+    maxHttpBufferSize: 200 * 1024
+  });
+
+  const rooms = new RoomManager();
+  const store = createStore({ quiet });
+  const gateway = getGateway({ store, debug: !quiet });
+
+  // Registrar los jugadores invitados por defecto
+  const JUGADORES_POR_DEFECTO = ['Manuel', 'Fernan', 'Alberto', 'Alvaro', 'Alejandro'];
+  store.initRoster(JUGADORES_POR_DEFECTO).catch((error) => {
+    if (!quiet) console.error('[corespon] Error registrando jugadores:', error.message);
+  });
+
+  const publicDir = path.join(__dirname, '..', 'public');
+  const sharedDir = path.join(__dirname, '..', 'shared');
+
+  app.disable('x-powered-by');
+  app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader(
+      'Content-Security-Policy',
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+      + "img-src 'self' data:; connect-src 'self' ws: wss:; base-uri 'none'; form-action 'self'"
+    );
+    next();
+  });
+
+  app.use(express.static(publicDir, { index: false, maxAge: '5m' }));
+  app.use('/shared', express.static(sharedDir, { maxAge: '5m' }));
+  app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
+
+  const coresponFile = path.join(publicDir, 'corespon.html');
+
+  // ============================ API REST ============================
+
+  app.get('/api/players', async (req, res) => {
+    try {
+      const players = await store.getPlayers();
+      res.json({ ok: true, players: players.filter(p => p.activa).map(p => ({
+        id: p.id, nombre: p.nombre, whatsapp: p.whatsapp
+      })) });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  app.post('/api/players/:id/whatsapp', async (req, res) => {
+    try {
+      const player = await store.updatePlayer(req.params.id, { whatsapp: req.body.whatsapp });
+      if (!player) return res.status(404).json({ ok: false, error: 'jugador no encontrado' });
+      res.json({ ok: true, player });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  app.get('/api/partidas', async (req, res) => {
+    try {
+      const partidas = await store.getPartidasAbiertas();
+      res.json({ ok: true, partidas: partidas.map(p => ({
+        roomCode: p.roomCode, blancas: p.blancas, negras: p.negras,
+        turno: p.turno, plazoHasta: p.plazoHasta, creadoEn: p.creadoEn
+      })) });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  app.get('/api/partidas/:code', async (req, res) => {
+    try {
+      const partida = await store.getPartidaPorCodigo(req.params.code);
+      if (!partida) return res.status(404).json({ ok: false, error: 'partida no encontrada' });
+      res.json({ ok: true, partida });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  // Crear una invitación de partida
+  app.post('/api/partidas/invitar', async (req, res) => {
+    try {
+      const { blancas, negras } = req.body;
+      if (!blancas || !negras) {
+        return res.status(400).json({ ok: false, error: 'Se necesitan blancas y negras' });
+      }
+
+      const roster = await store.getPlayers();
+      const blancoObj = roster.find(p => sameName(p.nombre, blancas));
+      const negroObj = roster.find(p => sameName(p.nombre, negras));
+
+      const whiteName = blancoObj ? blancoObj.nombre : blancas;
+      const blackName = negroObj ? negroObj.nombre : negras;
+
+      // Registrar jugadores si no existen
+      for (const obj of [blancoObj, negroObj]) {
+        if (!obj) {
+          const nombre = blancoObj ? blancas : negras;
+          await store.savePlayer({
+            id: nombre.toLowerCase(),
+            nombre: nombre,
+            activa: true,
+            whatsapp: null
+          });
+        }
+      }
+
+      // Verificar que no haya partido abierto entre ellos
+      const abiertas = await store.getPartidasAbiertas();
+      const yaJuegan = abiertas.some(p =>
+        sameName(p.blancas, blancas) && sameName(p.negras, negras)
+      );
+      if (yaJuegan) {
+        const p = abiertas.find(p =>
+          sameName(p.blancas, blancas) && sameName(p.negras, negras)
+        );
+        return res.json({ ok: true, color: 'white', room: { code: p.roomCode }, existing: true });
+      }
+
+      const room = rooms.createRoom(whiteName, blackName);
+      room.players.white.token = crypto.randomUUID();
+      room.players.white.joinedAt = Date.now();
+      // no marcar connected aquí: el cliente se conectará por socket
+
+      // Guardar en DB
+      await store.savePartida({
+        roomCode: room.code,
+        blancas: room.players.white.name,
+        negras: room.players.black.name,
+        fen: estadoAFen(room.state),
+        pgn: estadoAPgn(room),
+        turno: room.turnColor(),
+        estado: 'abierta',
+        creadoEn: Date.now(),
+        plazoHasta: new Date(room.plazos.plazoHasta).toISOString(),
+        graciaHasta: new Date(room.plazos.graciaHasta).toISOString(),
+        prorrogas: []
+      });
+
+      // Notificar por WhatsApp si los números están registrados
+      const host = getHost(req);
+      const whiteHasWpp = blancoObj && blancoObj.whatsapp;
+      const blackHasWpp = negroObj && negroObj.whatsapp;
+
+      if (blackHasWpp) {
+        gateway.enqueue(room.code, INVITACION, negroObj.whatsapp, null, invitacionMsg(room, whiteName, host), host);
+      }
+      if (whiteHasWpp) {
+        gateway.enqueue(room.code, TURNO, blancoObj.whatsapp, null, turnoMsg(room, 'white', host), host);
+      }
+
+      res.json({
+        ok: true,
+        color: 'white',
+        room: room.toPublic()
+      });
+    } catch (error) {
+      log('Error creando invitación:', error);
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  // ============================ SOCKET.IO ============================
+
+  const tokenMap = new Map();
+
+  io.on('connection', (socket) => {
+    const now = Date.now();
+
+    socket.on('corespon:join', async (data, respond) => {
+      const room = rooms.getRoom(normalizeCode(data.code));
+      if (!room) return respond({ ok: false, error: 'not_found' });
+      if (room.status.over) return respond({ ok: false, error: 'game_over' });
+
+      const color = room.colorForName(data.name);
+      if (!color) {
+        return respond({ ok: false, error: 'not_your_game' });
+      }
+
+      const player = room.players[color];
+      const isReconnect = data.token && player.token && data.token === player.token;
+
+      // El asiento ya está ocupado por otro socket (no es este cliente)
+      if (player.connected && !isReconnect) {
+        return respond({ ok: false, error: 'seat_taken' });
+      }
+
+      player.token = player.token || crypto.randomUUID();
+      player.connected = true;
+      player.joinedAt = player.joinedAt || Date.now();
+
+      tokenMap.set(player.token, room.code);
+
+      // Notificar al otro jugador por WhatsApp
+      const otherColor = color === 'white' ? 'black' : 'white';
+      const otherPlayer = room.players[otherColor];
+      const host = getHost(socket.request);
+      gateway.enqueue(room.code, TURNO, otherPlayer.whatsapp, null, turnoMsg(room, otherColor, host), host);
+
+      if (bothConnected(room)) room.timing.runningSince = now;
+
+      await persistRoom(room);
+
+      socket.join(room.code);
+      respond({ ok: true, room: room.toPublic(), color, resumed: isReconnect });
+    });
+
+    socket.on('corespon:leave', (data, respond) => {
+      const room = rooms.getRoom(normalizeCode(data.code));
+      if (!room) return respond({ ok: true });
+
+      const color = data.color;
+      if (room.players[color]) {
+        room.players[color].connected = false;
+        tokenMap.delete(room.players[color].token);
+        persistRoom(room);
+      }
+
+      if (bothConnected(room)) {
+        room.timing.runningSince = null;
+        io.to(room.code).emit('corespon:room:update', room.toPublic());
+      }
+      respond({ ok: true });
+    });
+
+    socket.on('corespon:watch', (data, respond) => {
+      const room = rooms.getRoom(normalizeCode(data.code));
+      if (!room) return respond({ ok: false, error: 'not_found' });
+
+      socket.id.roomCode = room.code;
+      room.spectators.add(socket.id);
+      respond({ ok: true, room: room.toPublic() });
+    });
+
+    socket.on('corespon:unwatch', (data, respond) => {
+      const room = rooms.getRoom(normalizeCode(data.code));
+      if (!room) return respond({ ok: true });
+      room.spectators.delete(socket.id);
+      respond({ ok: true });
+    });
+
+    // Movimiento
+    socket.on('corespon:move', (data, respond) => {
+      const room = rooms.getRoom(normalizeCode(data.code));
+      if (!room) return respond({ ok: false, error: 'not_found' });
+
+      const color = data.color;
+      const player = room.players[color];
+      if (!player || !player.connected) {
+        return respond({ ok: false, error: 'not_in_room' });
+      }
+
+      const result = room.aplicarJugada(data.from, data.to, data.promotion);
+
+      if (!result.ok) {
+        return respond(result);
+      }
+
+      persistRoom(room);
+
+      io.to(room.code).emit('corespon:room:update', room.toPublic());
+
+      if (!room.status.over) {
+        const host = getHost(socket.request);
+        const otherColor = room.turnColor() === 'white' ? 'black' : 'white';
+        gateway.enqueue(room.code, TURNO, room.players[otherColor].whatsapp, null, turnoMsg(room, otherColor, host), host);
+      } else {
+        const host = getHost(socket.request);
+        gateway.enqueue(room.code, FIN, room.players.white.whatsapp, null, finMsg(room, host), host);
+        gateway.enqueue(room.code, FIN, room.players.black.whatsapp, null, finMsg(room, host), host);
+      }
+
+      respond({ ok: true, room: room.toPublic() });
+    });
+
+    // Prórroga
+    socket.on('corespon:extend', (data, respond) => {
+      const room = rooms.getRoom(normalizeCode(data.code));
+      if (!room) return respond({ ok: false, error: 'not_found' });
+
+      const color = data.color;
+      const player = room.players[color];
+      if (!player || !player.connected) {
+        return respond({ ok: false, error: 'not_in_room' });
+      }
+
+      const result = room.extenderPlazo(color);
+      if (result.ok) {
+        persistRoom(room);
+        io.to(room.code).emit('corespon:room:update', room.toPublic());
+        const host = getHost(socket.request);
+        gateway.enqueue(room.code, PRORROGA, room.players[room.turnColor()].whatsapp, null, prorrogaMsg(room, host), host);
+        respond(result);
+      } else {
+        respond(result);
+      }
+    });
+
+    // Rendición
+    socket.on('corespon:resign', (data, respond) => {
+      const room = rooms.getRoom(normalizeCode(data.code));
+      if (!room) return respond({ ok: false, error: 'not_found' });
+
+      const color = data.color;
+      const player = room.players[color];
+      if (!player || !player.connected) {
+        return respond({ ok: false, error: 'not_in_room' });
+      }
+
+      room.rendir(color);
+      persistRoom(room);
+      io.to(room.code).emit('corespon:room:update', room.toPublic());
+
+      const host = getHost(socket.request);
+      gateway.enqueue(room.code, FIN, room.players.white.whatsapp, null, finMsg(room, host), host);
+      gateway.enqueue(room.code, FIN, room.players.black.whatsapp, null, finMsg(room, host), host);
+
+      respond({ ok: true, room: room.toPublic() });
+    });
+
+    // Reconexión
+    socket.on('corespon:reconnect', (data, respond) => {
+      const room = rooms.getRoom(normalizeCode(data.code));
+      if (!room) {
+        return respond({ ok: false, error: 'not_found' });
+      }
+      socket.id.roomCode = room.code;
+      socket.join(room.code);
+      respond({ ok: true, room: room.toPublic() });
+    });
+
+    socket.on('disconnect', () => {
+      const code = socket.id.roomCode;
+      if (code) {
+        const room = rooms.getRoom(code);
+        if (room) {
+          const color = room.colorForToken(socket.handshake.auth?.token);
+          if (color) room.players[color].connected = false;
+          if (bothConnected(room)) room.timing.runningSince = null;
+          persistRoom(room);
+        }
+      }
+    });
+  });
+
+  // ============================ TASKS ASÍNCRONOS ============================
+
+  // 1. Revisar plazos caducados → derrota por tiempo
+  setInterval(async () => {
+    const now = Date.now();
+    const perdidas = rooms.checkDeadlines(now);
+    for (const room of perdidas) {
+      await persistRoom(room);
+      io.to(room.code).emit('corespon:room:update', room.toPublic());
+
+      const loser = room.turnColor();
+      const winner = loser === 'white' ? 'black' : 'white';
+      const host = 'http://localhost:3001';
+      gateway.enqueue(room.code, TIEMPO, room.players[loser].whatsapp, null, tiempoMsg(room, loser, host), host);
+      gateway.enqueue(room.code, FIN, room.players[winner].whatsapp, null, finMsg(room, host), host);
+    }
+  }, CHECK_DEADLINE_MS);
+
+  // 2. Recordatorios
+  setInterval(async () => {
+    const salas = rooms.needReminder();
+    for (const room of salas) {
+      const host = 'http://localhost:3001';
+      gateway.enqueue(room.code, RECORDATORIO, room.players[room.turnColor()].whatsapp, null, recordatorioMsg(room, host), host);
+    }
+  }, CHECK_RECORDATORIO_MS);
+
+  // 3. Limpieza
+  setInterval(() => {
+    const removed = rooms.cleanup();
+    for (const code of removed) log('Sala eliminada (vacía):', code);
+  }, CLEANUP_INTERVAL_MS);
+
+  // 4. Procesa colas de WhatsApp
+  setInterval(async () => {
+    const res = await gateway.processQueue(50);
+    if (res.processed) log('Notificaciones WhatsApp enviadas:', res.processed);
+  }, 60 * 1000);
+
+  // ============================ RUTAS + SERVIDOR ============================
+
+  app.get('/corespon', (req, res) => res.sendFile(coresponFile));
+  app.get('/corespon/:code', (req, res) => res.sendFile(coresponFile));
+
+  app.get('/api/whatsapp/queue', async (req, res) => {
+    try {
+      const all = await store.getNotificacionesPendientes(100);
+      res.json({ ok: true, notificaciones: all });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  app.get('/api/status', async (req, res) => {
+    try {
+      const stats = await store.obtenerEstadisticas();
+      res.json({ ok: true, estadisticas: stats });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  function randomToken() {
+    return crypto.randomUUID();
+  }
+
+  function bothConnected(room) {
+    return !!(room.players.white && room.players.black
+      && room.players.white.connected && room.players.black.connected);
+  }
+
+  function estadoAFen(state) {
+    const pieceToFen = {
+      '♙': 'P', '♖': 'R', '♘': 'N', '♗': 'B', '♕': 'Q', '♔': 'K',
+      '♟': 'p', '♜': 'r', '♞': 'n', '♝': 'b', '♛': 'q', '♚': 'k'
+    };
+    let fen = '';
+    for (let r = 0; r < 8; r++) {
+      let empty = 0;
+      for (let c = 0; c < 8; c++) {
+        const p = state.board[r][c];
+        if (p === ' ') {
+          empty++;
+        } else {
+          if (empty > 0) { fen += empty; empty = 0; }
+          fen += pieceToFen[p] || '?';
+        }
+      }
+      if (empty > 0) fen += empty;
+      if (r < 7) fen += '/';
+    }
+    fen += ' ' + (state.turn === 'white' ? 'w' : 'b');
+    let castling = '';
+    if (!state.kingMoved.white) {
+      if (!state.rookMoved.white.kingside) castling += 'K';
+      if (!state.rookMoved.white.queenside) castling += 'Q';
+    }
+    if (!state.kingMoved.black) {
+      if (!state.rookMoved.black.kingside) castling += 'k';
+      if (!state.rookMoved.black.queenside) castling += 'q';
+    }
+    fen += ' ' + (castling || '-');
+    if (state.epTarget) {
+      fen += ' ' + engine.squareName(state.epTarget.row, state.epTarget.col);
+    } else {
+      fen += ' -';
+    }
+    fen += ' ' + state.halfmove + ' ' + state.fullmove;
+    return fen;
+  }
+
+  function estadoAPgn(room) {
+    return buildPgn(room);
+  }
+
+  function persistRoom(room) {
+    const pgn = room.history.length ? estadoAPgn(room) : null;
+    const timing = room.timing;
+
+    return store.savePartida({
+      roomCode: room.code,
+      blancas: room.players.white.name,
+      negras: room.players.black.name,
+      fen: estadoAFen(room.state),
+      pgn,
+      turno: room.turnColor(),
+      estado: room.status.over ? 'terminada' : 'abierta',
+      resultado: room.status.winner === 'white' ? 'blancas'
+        : room.status.winner === 'black' ? 'negras'
+        : 'tablas',
+      creadoEn: room.plazos.creadoEn,
+      movidaEn: new Date().toISOString(),
+      plazoHasta: new Date(room.plazos.plazoHasta).toISOString(),
+      graciaHasta: new Date(room.plazos.graciaHasta).toISOString(),
+      prorrogas: room.plazos.prorrogas,
+      ultimaProrrogaHasta: room.plazos.ultimaProrrogaHasta
+        ? new Date(room.plazos.ultimaProrrogaHasta).toISOString() : null
+    });
+  }
+
+  server.listen(3001, () => {
+    log('Servidor de correspondencia en puerto 3001');
+    log('Abre http://localhost:3001/corespon');
+  });
+
+  return { app, server, io, rooms, store, gateway };
+}
+
+module.exports = { createServer, Room };
+
+if (require.main === module) {
+  createServer({ quiet: false });
+}
