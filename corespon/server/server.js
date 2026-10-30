@@ -202,20 +202,8 @@ function createServer(options = {}) {
       room.players.white.joinedAt = Date.now();
       // no marcar connected aquí: el cliente se conectará por socket
 
-      // Guardar en DB
-      await store.savePartida({
-        roomCode: room.code,
-        blancas: room.players.white.name,
-        negras: room.players.black.name,
-        fen: estadoAFen(room.state),
-        pgn: estadoAPgn(room),
-        turno: room.turnColor(),
-        estado: 'abierta',
-        creadoEn: Date.now(),
-        plazoHasta: new Date(room.plazos.plazoHasta).toISOString(),
-        graciaHasta: new Date(room.plazos.graciaHasta).toISOString(),
-        prorrogas: []
-      });
+      // Guardar en DB (incluye el snapshot completo para poder restaurar)
+      await persistRoom(room);
 
       // Notificar por WhatsApp si los números están registrados
       const host = baseUrl(req);
@@ -586,7 +574,6 @@ function createServer(options = {}) {
 
   function persistRoom(room) {
     const pgn = room.history.length ? estadoAPgn(room) : null;
-    const timing = room.timing;
 
     return store.savePartida({
       roomCode: room.code,
@@ -594,6 +581,7 @@ function createServer(options = {}) {
       negras: room.players.black.name,
       fen: estadoAFen(room.state),
       pgn,
+      snapshot: room.snapshot(),
       turno: room.turnColor(),
       estado: room.status.over ? 'terminada' : 'abierta',
       resultado: room.status.winner === 'white' ? 'blancas'
@@ -606,7 +594,35 @@ function createServer(options = {}) {
       prorrogas: room.plazos.prorrogas,
       ultimaProrrogaHasta: room.plazos.ultimaProrrogaHasta
         ? new Date(room.plazos.ultimaProrrogaHasta).toISOString() : null
+    }).catch((error) => {
+      // Persistir nunca debe tumbar el proceso: la partida sigue en memoria.
+      if (!quiet) console.error('[corespon] Error guardando la partida', room.code + ':', error.message);
+      return null;
     });
+  }
+
+  /*
+   * Recarga las partidas abiertas guardadas en la base de datos.
+   * Se ejecuta una vez, antes de abrir el puerto.
+   */
+  async function restoreRooms() {
+    try {
+      const abiertas = await store.getPartidasAbiertas();
+      const restored = rooms.hydrateAll(abiertas);
+      const skipped = abiertas.length - restored.length;
+      if (restored.length) log('Partidas restauradas:', restored.length);
+      if (skipped > 0) log('Partidas sin snapshot, no restauradas:', skipped);
+      return restored;
+    } catch (error) {
+      if (!quiet) console.error('[corespon] Error restaurando partidas:', error.message);
+      return [];
+    }
+  }
+
+  let readyPromise = null;
+  function ready() {
+    if (!readyPromise) readyPromise = restoreRooms();
+    return readyPromise;
   }
 
   /*
@@ -615,7 +631,7 @@ function createServer(options = {}) {
    */
   function start(port) {
     const chosen = Number(port) || Number(options.port) || Number(process.env.PORT) || 3001;
-    return new Promise((resolve, reject) => {
+    return ready().then(() => new Promise((resolve, reject) => {
       const onError = (error) => {
         server.off('listening', onListening);
         reject(error);
@@ -633,7 +649,7 @@ function createServer(options = {}) {
       server.once('error', onError);
       server.once('listening', onListening);
       server.listen(chosen);
-    });
+    }));
   }
 
   /*
@@ -647,7 +663,7 @@ function createServer(options = {}) {
     await store.close().catch(() => {});
   }
 
-  return { app, server, io, rooms, store, gateway, start, close };
+  return { app, server, io, rooms, store, gateway, start, close, ready };
 }
 
 module.exports = { createServer, Room };

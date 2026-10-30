@@ -308,6 +308,104 @@ class Room {
     return this.status;
   }
 
+  // ---------- persistencia ----------
+
+  /*
+   * Estado completo de la sala para guardar en la base de datos y poder
+   * restaurarla tras un reinicio. Incluye los tokens de ambos jugadores.
+   */
+  snapshot() {
+    return {
+      version: 1,
+      state: this.state,
+      status: this.status,
+      history: this.history,
+      players: {
+        white: {
+          name: this.players.white.name,
+          token: this.players.white.token,
+          joinedAt: this.players.white.joinedAt
+        },
+        black: {
+          name: this.players.black.name,
+          token: this.players.black.token,
+          joinedAt: this.players.black.joinedAt
+        }
+      },
+      plazos: { ...this.plazos, prorrogas: this.plazos.prorrogas.slice() },
+      timing: { ...this.timing, moves: this.timing.moves.slice() },
+      parentCode: this.parentCode
+    };
+  }
+
+  static fromSnapshot(code, raw) {
+    if (!raw) return null;
+
+    let data = raw;
+    if (typeof raw === 'string') {
+      try {
+        data = JSON.parse(raw);
+      } catch (error) {
+        return null;
+      }
+    }
+
+    if (!data || !engine.validState(data.state)) return null;
+
+    const savedWhite = data.players && data.players.white;
+    const savedBlack = data.players && data.players.black;
+    if (!savedWhite || !savedBlack || !savedWhite.name || !savedBlack.name) return null;
+
+    const room = new Room(code, savedWhite.name, savedBlack.name);
+    room.state = data.state;
+    room.status = {
+      over: !!(data.status && data.status.over),
+      reason: (data.status && data.status.reason) || null,
+      winner: (data.status && data.status.winner) || null,
+      inCheck: !!(data.status && data.status.inCheck)
+    };
+    room.history = Array.isArray(data.history) ? data.history : [];
+
+    for (const color of ['white', 'black']) {
+      const saved = data.players[color];
+      const player = room.players[color];
+      player.token = typeof saved.token === 'string' && saved.token ? saved.token : null;
+      player.connected = false;
+      player.socketId = null;
+      player.joinedAt = Number.isFinite(saved.joinedAt) ? saved.joinedAt : null;
+    }
+
+    if (data.plazos) {
+      const saved = data.plazos;
+      const num = (value, fallback) => (Number.isFinite(value) ? value : fallback);
+      room.plazos = {
+        plazoMs: num(saved.plazoMs, PLAZO_DEFAULT_MS),
+        graciaMs: num(saved.graciaMs, GRACIA_DEFAULT_MS),
+        plazoHasta: num(saved.plazoHasta, room.plazos.plazoHasta),
+        graciaHasta: num(saved.graciaHasta, room.plazos.graciaHasta),
+        prorrogas: Array.isArray(saved.prorrogas) ? saved.prorrogas : [],
+        creadoEn: num(saved.creadoEn, room.plazos.creadoEn),
+        ultimaJugadaEn: num(saved.ultimaJugadaEn, room.plazos.ultimaJugadaEn),
+        recordado: !!saved.recordado,
+        avisadoCaducidad: !!saved.avisadoCaducidad
+      };
+    }
+
+    if (data.timing) {
+      const saved = data.timing;
+      room.timing = {
+        white: Number.isFinite(saved.white) ? saved.white : 0,
+        black: Number.isFinite(saved.black) ? saved.black : 0,
+        moves: Array.isArray(saved.moves) ? saved.moves : [],
+        // Al restaurar nadie está conectado: el reloj no corre.
+        runningSince: null
+      };
+    }
+
+    room.parentCode = typeof data.parentCode === 'string' ? data.parentCode : null;
+    return room;
+  }
+
   // ---------- serialización ----------
 
   toPublic() {
@@ -387,6 +485,31 @@ class RoomManager {
     const room = new Room(code, whiteName, blackName);
     this.rooms.set(code, room);
     return room;
+  }
+
+  /*
+   * Reconstruye una sala desde una partida guardada. Devuelve null si no hay
+   * snapshot utilizable (partidas antiguas) o si el código ya está en memoria.
+   */
+  hydrate(record) {
+    if (!record || !record.roomCode) return null;
+    const code = normalizeCode(record.roomCode);
+    if (!code || this.rooms.has(code)) return null;
+
+    const room = Room.fromSnapshot(code, record.snapshot);
+    if (!room) return null;
+
+    this.rooms.set(code, room);
+    return room;
+  }
+
+  hydrateAll(records) {
+    const restored = [];
+    for (const record of records || []) {
+      const room = this.hydrate(record);
+      if (room) restored.push(room);
+    }
+    return restored;
   }
 
   /*

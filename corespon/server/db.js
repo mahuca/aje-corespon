@@ -47,6 +47,10 @@ const SCHEMA = [
      ultima_prorroga_hasta TIMESTAMPTZ
    )`,
 
+  // Estado completo de la sala (tablero, historial, plazos, tokens) para poder
+  // restaurar una partida tras un reinicio del servidor.
+  `ALTER TABLE corespon_partidas ADD COLUMN IF NOT EXISTS snapshot JSONB`,
+
   `CREATE TABLE IF NOT EXISTS corespon_prorrogas (
      id BIGSERIAL PRIMARY KEY,
      room_code TEXT NOT NULL,
@@ -86,32 +90,43 @@ const SCHEMA = [
 
 // ============================ ALMACENAMIENTO EN MEMORIA ============================
 
+function iso(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function pick(record, snake, camel) {
+  return record[snake] !== undefined ? record[snake] : record[camel];
+}
+
 function emptyPlayer(record) {
   return {
     id: record.id,
     nombre: record.nombre,
     activa: !!record.activa,
     whatsapp: record.whatsapp || null,
-    creadoEn: record.creadoEn || new Date(record.creado_en).toISOString()
+    creadoEn: iso(record.creadoEn || record.creado_en)
   };
 }
 
 function emptyPartida(record) {
   return {
-    roomCode: record.room_code,
+    roomCode: record.room_code || record.roomCode,
     blancas: record.blancas,
     negras: record.negras,
     fen: record.fen || null,
     pgn: record.pgn || null,
+    snapshot: record.snapshot || null,
     turno: record.turno,
     estado: record.estado,
     resultado: record.resultado || null,
-    creadoEn: record.creadoEn || new Date(record.creado_en).toISOString(),
-    movidaEn: record.movidaEn || null,
-    plazoHasta: record.plazoHasta ? new Date(record.plazo_hasta).toISOString() : null,
-    graciaHasta: record.graciaHasta ? new Date(record.gracia_hasta).toISOString() : null,
+    creadoEn: iso(pick(record, 'creado_en', 'creadoEn')),
+    movidaEn: iso(pick(record, 'movida_en', 'movidaEn')),
+    plazoHasta: iso(pick(record, 'plazo_hasta', 'plazoHasta')),
+    graciaHasta: iso(pick(record, 'gracia_hasta', 'graciaHasta')),
     prorrogas: Array.isArray(record.prorrogas) ? record.prorrogas : [],
-    ultimaProrrogaHasta: record.ultimaProrrogaHasta ? new Date(record.ultima_prorroga_hasta).toISOString() : null
+    ultimaProrrogaHasta: iso(pick(record, 'ultima_prorroga_hasta', 'ultimaProrrogaHasta'))
   };
 }
 
@@ -130,11 +145,11 @@ function emptyProrroga(record) {
 function emptyNotificacion(record) {
   return {
     id: record.id,
-    roomCode: record.room_code,
+    roomCode: record.roomCode || record.room_code || null,
     tipo: record.tipo,
     destinatario: record.destinatario || null,
     estado: record.estado,
-    enviadoEn: record.enviadoEn ? new Date(record.enviado_en).toISOString() : null,
+    enviadoEn: iso(record.enviadoEn || record.enviado_en),
     error: record.error || null
   };
 }
@@ -191,8 +206,11 @@ function createMemoryStore() {
     },
 
     async savePartida(partida) {
-      partidas.set(partida.roomCode, { ...partida });
-      return partida;
+      // Copia profunda: el snapshot no debe compartir referencias con la sala
+      // viva (en modo memoria el proceso sigue mutando el mismo objeto).
+      const record = structuredClone(partida);
+      partidas.set(record.roomCode, record);
+      return record;
     },
 
     async deletePartida(roomCode) {
@@ -365,19 +383,21 @@ function createPostgresStore(connectionString, options = {}) {
       await init();
       const { rows } = await pool.query(
         `INSERT INTO corespon_partidas
-          (room_code, blancas, negras, fen, pgn, turno, estado, resultado,
+          (room_code, blancas, negras, fen, pgn, snapshot, turno, estado, resultado,
            creado_en, movida_en, plazo_hasta, gracia_hasta, prorrogas, ultima_prorroga_hasta)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
          ON CONFLICT (room_code) DO UPDATE SET
-           fen = EXCLUDED.fen, pgn = EXCLUDED.pgn, turno = EXCLUDED.turno,
+           fen = EXCLUDED.fen, pgn = EXCLUDED.pgn, snapshot = EXCLUDED.snapshot,
+           turno = EXCLUDED.turno,
            estado = EXCLUDED.estado, resultado = EXCLUDED.resultado,
            movida_en = EXCLUDED.movida_en, plazo_hasta = EXCLUDED.plazo_hasta,
-           gracia_hasta = EXCLUDED.gracia_hasta, prorrogas = EXCLUDED.porrogas,
+           gracia_hasta = EXCLUDED.gracia_hasta, prorrogas = EXCLUDED.prorrogas,
            ultima_prorroga_hasta = EXCLUDED.ultima_prorroga_hasta
          RETURNING *`,
         [
           partida.roomCode, partida.blancas, partida.negras, partida.fen || null,
-          partida.pgn || null, partida.turno, partida.estado, partida.resultado || null,
+          partida.pgn || null, partida.snapshot ? JSON.stringify(partida.snapshot) : null,
+          partida.turno, partida.estado, partida.resultado || null,
           new Date(partida.creadoEn).toISOString(),
           partida.movidaEn ? new Date(partida.movidaEn).toISOString() : null,
           partida.plazoHasta ? new Date(partida.plazoHasta).toISOString() : null,
