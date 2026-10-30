@@ -16,6 +16,8 @@ services:
         value: "24"
       - key: TZ
         value: "Europe/Madrid"
+      - key: BASE_URL
+        value: "https://aje-corespon.onrender.com"
       - key: NOTIFY_PROVIDER
         value: "telegram"
       # Secretos: se piden al crear el Blueprint o se ponen en el panel.
