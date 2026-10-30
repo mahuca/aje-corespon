@@ -102,8 +102,8 @@ Variables que deben existir en el panel **Environment**:
 | `DATABASE_URL` | configurada (Neon, `/neondb`). |
 | `ADMIN_TOKEN` | configurada; protege `/api/whatsapp/queue`. |
 | `BASE_URL` | configurada; enlaces de los avisos de los temporizadores. |
-| `TELEGRAM_BOT_TOKEN` | **pendiente**: sin ella no se envían avisos. |
-| `TELEGRAM_CHAT_ID` | **pendiente**: id del grupo. |
+| `TELEGRAM_BOT_TOKEN` | configurada (bot `@ajecorespon_abuelo_bot`). |
+| `TELEGRAM_CHAT_ID` | configurada (grupo familiar). |
 
 El roster (6 jugadores, Abuelo administrador) se crea solo al arrancar; no
 hace falta ejecutar `npm run init-db` en producción.
