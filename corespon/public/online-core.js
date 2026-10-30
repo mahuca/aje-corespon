@@ -73,6 +73,11 @@
   }
 
   function saveSession(next) {
+    if (!next || typeof next.code !== 'string' || typeof next.token !== 'string') {
+      // Sin token no hay forma de recuperar el asiento: no guardamos una
+      // sesión que luego no se podría reanudar.
+      return;
+    }
     session = next;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
@@ -179,9 +184,10 @@
   // ==================== API ====================
 
   async function joinRoom(code, name) {
-    if (session) await leaveRoom({ silent: true });
     const normalized = String(code || '').trim().toUpperCase();
+    // El token debe leerse ANTES de leaveRoom(): esa llamada limpia la sesión.
     const token = session && session.code === normalized ? session.token : undefined;
+    if (session) await leaveRoom({ silent: true });
 
     const response = await request('corespon:join', {
       code: normalized,

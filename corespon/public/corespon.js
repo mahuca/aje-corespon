@@ -230,6 +230,14 @@
     }
   }
 
+  // Código de sala desde /corespon/CODE (enlaces de WhatsApp) o ?code=CODE.
+  function codeFromUrl() {
+    const match = window.location.pathname.match(/\/corespon\/([A-Za-z0-9]{6})\/?$/);
+    if (match) return match[1].toUpperCase();
+    const param = new URLSearchParams(window.location.search).get('code');
+    return param ? param.trim().toUpperCase() : null;
+  }
+
   // ==================== PANTALLAS ====================
 
   function showLobby() {
@@ -1495,11 +1503,11 @@
     showLobby();
 
     const session = O.getSession();
-    const urlCode = new URLSearchParams(window.location.search).get('code');
-    if (session && session.code && urlCode === session.code) {
+    const urlCode = codeFromUrl();
+    if (session && session.code && (!urlCode || urlCode === session.code)) {
       attemptResume();
     } else if (urlCode) {
-      el.codeInput.value = urlCode.toUpperCase();
+      el.codeInput.value = urlCode;
     }
 
     const online = O.isConnected();

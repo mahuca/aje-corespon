@@ -258,7 +258,7 @@ function createServer(options = {}) {
       }
 
       const player = room.players[color];
-      const isReconnect = data.token && player.token && data.token === player.token;
+      const isReconnect = !!(data.token && player.token && data.token === player.token);
 
       // El asiento ya está ocupado por otro socket (no es este cliente)
       if (player.connected && !isReconnect) {
