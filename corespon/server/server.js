@@ -166,10 +166,28 @@ function createServer(options = {}) {
   // Crear una invitación de partida
   app.post('/api/partidas/invitar', async (req, res) => {
     try {
-      const { blancas, negras } = req.body;
+      // Formato nuevo: { jugador, rival, color } donde `color` es el color del
+      // creador. Se mantiene el formato { blancas, negras } por compatibilidad.
+      const color = req.body.color === 'black' ? 'black' : 'white';
+      const jugador = req.body.jugador;
+      const rival = req.body.rival;
+
+      let blancas = req.body.blancas;
+      let negras = req.body.negras;
+      if (jugador && rival) {
+        blancas = color === 'black' ? rival : jugador;
+        negras = color === 'black' ? jugador : rival;
+      }
+
       if (!blancas || !negras) {
         return res.status(400).json({ ok: false, error: 'Se necesitan blancas y negras' });
       }
+      if (sameName(blancas, negras)) {
+        return res.status(400).json({ ok: false, error: 'Un jugador no puede jugar contra sí mismo' });
+      }
+
+      // Color del creador (el que hace la petición).
+      const colorCreador = color;
 
       const roster = await store.getPlayers();
       const blancoObj = roster.find(p => sameName(p.nombre, blancas));
@@ -191,43 +209,48 @@ function createServer(options = {}) {
         }
       }
 
-      // Verificar que no haya partido abierto entre ellos
+      // Verificar que no haya partida abierta entre ellos, en cualquier orden
+      const solicitante = jugador || blancas;
       const abiertas = await store.getPartidasAbiertas();
-      const yaJuegan = abiertas.some(p =>
-        sameName(p.blancas, blancas) && sameName(p.negras, negras)
+      const existente = abiertas.find(p =>
+        (sameName(p.blancas, blancas) && sameName(p.negras, negras)) ||
+        (sameName(p.blancas, negras) && sameName(p.negras, blancas))
       );
-      if (yaJuegan) {
-        const p = abiertas.find(p =>
-          sameName(p.blancas, blancas) && sameName(p.negras, negras)
-        );
-        return res.json({ ok: true, color: 'white', room: { code: p.roomCode }, existing: true });
+      if (existente) {
+        const colorExistente = sameName(existente.blancas, solicitante) ? 'white' : 'black';
+        return res.json({
+          ok: true,
+          color: colorExistente,
+          room: { code: existente.roomCode },
+          existing: true
+        });
       }
 
       const room = rooms.createRoom(whiteName, blackName);
-      room.players.white.token = crypto.randomUUID();
-      room.players.white.joinedAt = Date.now();
+      const asientoCreador = room.players[colorCreador];
+      asientoCreador.token = crypto.randomUUID();
+      asientoCreador.joinedAt = Date.now();
       // no marcar connected aquí: el cliente se conectará por socket
 
       // Guardar en DB (incluye el snapshot completo para poder restaurar)
       await persistRoom(room);
 
-      // Notificar a los dos jugadores. El gateway decide si el canal necesita
-      // teléfono y no encola nada si no está configurado.
+      // Invitar al jugador del color contrario al del creador. El gateway
+      // decide si el canal necesita teléfono y si está configurado.
       const host = baseUrl(req);
+      const colorInvitado = colorCreador === 'white' ? 'black' : 'white';
+      const invitado = colorInvitado === 'white'
+        ? { nombre: whiteName, whatsapp: blancoObj && blancoObj.whatsapp }
+        : { nombre: blackName, whatsapp: negroObj && negroObj.whatsapp };
+
       gateway.enqueue(
         room.code, INVITACION,
-        { nombre: blackName, whatsapp: negroObj && negroObj.whatsapp },
-        invitacionMsg(room, 'black', host), host
-      );
-      gateway.enqueue(
-        room.code, TURNO,
-        { nombre: whiteName, whatsapp: blancoObj && blancoObj.whatsapp },
-        turnoMsg(room, 'white', host), host
+        invitado, invitacionMsg(room, colorInvitado, host), host
       );
 
       res.json({
         ok: true,
-        color: 'white',
+        color: colorCreador,
         room: room.toPublic()
       });
     } catch (error) {
@@ -275,13 +298,16 @@ function createServer(options = {}) {
 
       tokenMap.set(player.token, room.code);
 
-      // Notificar al otro jugador por WhatsApp (no en partidas terminadas:
-      // se entra solo a consultar el resultado).
+      // Avisar al jugador al que le toca mover, si no es quien acaba de
+      // entrar y ya estaba sentado (no en partidas terminadas: se entra solo
+      // a consultar el resultado).
       if (!room.status.over) {
-        const otherColor = color === 'white' ? 'black' : 'white';
-        const otherPlayer = room.players[otherColor];
-        const host = baseUrl(socket);
-        gateway.enqueue(room.code, TURNO, otherPlayer, turnoMsg(room, otherColor, host), host);
+        const turno = room.turnColor();
+        const turnoPlayer = room.players[turno];
+        if (turno !== color && turnoPlayer && turnoPlayer.joinedAt) {
+          const host = baseUrl(socket);
+          gateway.enqueue(room.code, TURNO, turnoPlayer, turnoMsg(room, turno, host), host);
+        }
       }
 
       if (!room.status.over && bothConnected(room)) room.timing.runningSince = now;

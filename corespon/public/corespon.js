@@ -49,6 +49,7 @@
     gameScreen: document.getElementById('gameScreen'),
     playerName: document.getElementById('playerName'),
     rivalName: document.getElementById('rivalName'),
+    playerColor: document.getElementById('playerColor'),
     createBtn: document.getElementById('createBtn'),
     joinForm: document.getElementById('joinForm'),
     joinBtn: document.getElementById('joinBtn'),
@@ -1219,6 +1220,7 @@
     if (busy) return;
     const name = el.playerName.value;
     const rival = el.rivalName.value;
+    const color = el.playerColor.value === 'black' ? 'black' : 'white';
     if (!name || !rival) {
       showToast('Selecciona tu nombre y el de tu rival.', 'error');
       return;
@@ -1235,7 +1237,7 @@
       const res = await fetch('/api/partidas/invitar', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ blancas: name, negras: rival })
+        body: JSON.stringify({ jugador: name, rival, color })
       });
       const data = await res.json();
       setBusy(false);
@@ -1245,9 +1247,6 @@
         return;
       }
 
-      myColor = data.color;
-      orientation = data.color;
-
       // Unirse a la sala por socket con el nombre propio
       const joined = await O.joinRoom(data.room.code, name);
       if (!joined.ok) {
@@ -1255,9 +1254,15 @@
         return;
       }
 
+      // El color real lo decide el asiento ocupado (también si la sala ya
+      // existía y se creó en orden inverso).
+      myColor = joined.color;
+      orientation = joined.color;
       room = joined.room;
       enterGame();
-      showToast('Sala creada. El rival recibirá una invitación por WhatsApp.');
+      showToast(data.existing
+        ? 'Ya teníais una partida abierta: se reutiliza la sala.'
+        : 'Sala creada. El rival recibirá una invitación por Telegram.');
     } catch (error) {
       setBusy(false);
       showLobbyError('Error de conexión con el servidor.');

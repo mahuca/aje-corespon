@@ -72,8 +72,8 @@ Verificación: `npm test` (47 pruebas).
 ## Fase E — Reglas de negocio pendientes
 
 - [ ] E1. "Solicitud de tiempo extra": hoy se concede automáticamente.
-- [ ] E2. Elegir color al crear la partida (hoy el creador siempre es blancas)
-      y evitar duplicados en orden inverso.
+- [x] E2. Elegir color al crear la partida y reutilizar la sala si ya existe
+      una partida abierta entre los mismos jugadores en orden inverso.
 - [ ] E3. Tablas por acuerdo / repetición triple (opcional).
 
 ## Reglas de negocio

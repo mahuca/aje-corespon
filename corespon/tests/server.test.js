@@ -517,3 +517,53 @@ test('espectador: recibe la sala y las jugadas, pero no puede mover', async (t) 
   const fuera = await request(spectator, 'corespon:unwatch', { code: room.code });
   assert.equal(fuera.ok, true);
 });
+
+test('invitación: el creador puede elegir negras', async (t) => {
+  const { instance, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const response = await fetch(base + '/api/partidas/invitar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jugador: 'Manuel', rival: 'Fernan', color: 'black' })
+  });
+  const data = await response.json();
+
+  assert.equal(data.ok, true);
+  assert.equal(data.color, 'black');
+  assert.equal(data.room.players.white.name, 'Fernan');
+  assert.equal(data.room.players.black.name, 'Manuel');
+  assert.equal(data.room.state.turn, 'white');
+});
+
+test('invitación: el duplicado en orden inverso reutiliza la sala', async (t) => {
+  const { instance, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const primera = await invite(base, 'Manuel', 'Fernan');
+
+  const response = await fetch(base + '/api/partidas/invitar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jugador: 'Fernan', rival: 'Manuel', color: 'white' })
+  });
+  const data = await response.json();
+
+  assert.equal(data.ok, true);
+  assert.equal(data.existing, true);
+  assert.equal(data.room.code, primera.room.code);
+  // En la partida ya abierta Manuel es blancas y Fernan negras.
+  assert.equal(data.color, 'black');
+});
+
+test('invitación: no se puede crear una partida contra uno mismo', async (t) => {
+  const { instance, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const response = await fetch(base + '/api/partidas/invitar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jugador: 'Manuel', rival: 'Manuel', color: 'white' })
+  });
+  assert.equal(response.status, 400);
+});
