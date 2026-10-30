@@ -696,17 +696,19 @@ function createPostgresStore(connectionString, options = {}) {
     async marcaNotificacionComoEnviada(id, error = null, proximoIntento = null) {
       await init();
       const { rows } = await pool.query(
+        // $2 va casteado a texto en todos los usos: Postgres no puede inferir
+        // el tipo solo por `IS NULL` (error "could not determine data type").
         `UPDATE corespon_notificaciones
          SET intentos = intentos + 1,
              ultimo_intento = now(),
-             error = $2,
+             error = $2::text,
              estado = CASE
-               WHEN $2 IS NULL THEN 'enviado'
+               WHEN $2::text IS NULL THEN 'enviado'
                WHEN $3::timestamptz IS NOT NULL THEN 'pendiente'
                ELSE 'fallido'
              END,
              proximo_intento = $3::timestamptz,
-             enviado_en = CASE WHEN $2 IS NULL OR $3::timestamptz IS NULL
+             enviado_en = CASE WHEN $2::text IS NULL OR $3::timestamptz IS NULL
                                THEN now() ELSE enviado_en END
          WHERE id = $1 RETURNING *`,
         [id, error || null, proximoIntento || null]

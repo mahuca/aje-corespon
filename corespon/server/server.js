@@ -631,9 +631,14 @@ function createServer(options = {}) {
   }, CLEANUP_INTERVAL_MS));
 
   // 4. Procesa colas de WhatsApp
-  timers.push(setInterval(async () => {
-    const res = await gateway.processQueue(50);
-    if (res.processed) log('Notificaciones procesadas:', res.processed);
+  timers.push(setInterval(() => {
+    gateway.processQueue(50)
+      .then((res) => {
+        if (res.processed) log('Notificaciones procesadas:', res.processed);
+      })
+      .catch((error) => {
+        if (!quiet) console.error('[corespon] Error procesando notificaciones:', error.message);
+      });
   }, 60 * 1000));
 
   // ============================ RUTAS + SERVIDOR ============================

@@ -247,3 +247,29 @@ test('cola: el resumen cuenta pendientes, enviados y fallidos', async () => {
   assert.equal((await store.getNotificacionesRecientes(10, 'enviado')).length, 1);
   assert.equal((await store.getNotificacionesRecientes(10, 'fallido')).length, 1);
 });
+
+test('cola: un fallo al guardar el estado no rechaza processQueue', async () => {
+  const store = createMemoryStore();
+  const gateway = new WhatsAppGateway({
+    store,
+    providerName: 'fake',
+    provider: async () => ({ id: '1' })
+  });
+
+  const room = new Room('ABC234', 'Manuel', 'Fernan');
+  await gateway.enqueue(
+    room.code, 'turno', { nombre: 'Manuel' },
+    turnoMsg(room, 'white', 'https://x').vars, 'https://x'
+  );
+
+  const original = store.marcaNotificacionComoEnviada;
+  store.marcaNotificacionComoEnviada = async () => {
+    throw new Error('db caida');
+  };
+
+  const res = await gateway.processQueue();
+  assert.equal(res.processed, 1);
+  assert.equal(res.results[0].ok, true);
+
+  store.marcaNotificacionComoEnviada = original;
+});

@@ -379,7 +379,16 @@ class WhatsAppGateway {
         }
       }
 
-      await this.store.marcaNotificacionComoEnviada(n.id, res.error || null, proximoIntento);
+      // Un fallo al persistir el estado no debe tumbar el servidor ni impedir
+      // que se procesen las demás notificaciones. Si el mensaje ya salió, se
+      // reintentará en la siguiente pasada (puede duplicarse).
+      try {
+        await this.store.marcaNotificacionComoEnviada(n.id, res.error || null, proximoIntento);
+      } catch (error) {
+        if (this.debug) {
+          console.error('[notificaciones] no se pudo guardar el estado:', error.message);
+        }
+      }
       results.push({ ...n, ...res, proximoIntento, estado: res.ok ? 'enviado' : (proximoIntento ? 'pendiente' : 'fallido') });
     }
     return { processed: results.length, results };
