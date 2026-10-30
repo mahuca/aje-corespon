@@ -2,18 +2,35 @@ services:
   - type: web
     name: aje-corespon
     env: node
-    buildCommand: "cd corespon && npm install"
-    startCommand: "cd corespon && node server.js"
+    buildCommand: "npm install"
+    startCommand: "node server.js"
     envVars:
       - key: NODE_VERSION
         value: "24"
       - key: PORT
         value: "3001"
+      - key: TZ
+        value: "Europe/Madrid"
       - key: DATABASE_URL
         sync: false
-      - key: WHATSAPP_PROVIDER
-        value: "meta"
-      - key: WHATSAPP_TOKEN
+      # Telegram: bot creado con @BotFather y el chat_id del grupo.
+      - key: NOTIFY_PROVIDER
+        value: "telegram"
+      - key: TELEGRAM_BOT_TOKEN
         sync: false
-      - key: WHATSAPP_PHONE_ID
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      # Chats privados opcionales (uno por jugador); si no se definen, todo va
+      # al grupo. Las claves siguen el nombre en mayúsculas y sin acentos.
+      - key: TELEGRAM_CHAT_MANUEL
+        sync: false
+      - key: TELEGRAM_CHAT_FERNAN
+        sync: false
+      - key: TELEGRAM_CHAT_ALBERTO
+        sync: false
+      - key: TELEGRAM_CHAT_ALVARO
+        sync: false
+      - key: TELEGRAM_CHAT_ALEJANDRO
+        sync: false
+      - key: TELEGRAM_CHAT_ABUELO
         sync: false
