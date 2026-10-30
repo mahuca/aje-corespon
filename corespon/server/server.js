@@ -781,7 +781,14 @@ function createServer(options = {}) {
   async function close() {
     for (const timer of timers) clearInterval(timer);
     timers.length = 0;
+
+    // Corta las conexiones de socket.io y el servidor HTTP (si sigue abierto).
     await new Promise((resolve) => io.close(() => resolve()));
+    await new Promise((resolve) => {
+      if (!server.listening) return resolve();
+      server.close(() => resolve());
+    });
+
     await store.close().catch(() => {});
   }
 

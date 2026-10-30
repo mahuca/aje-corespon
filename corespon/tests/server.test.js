@@ -471,3 +471,14 @@ test('api: la cola exige el token de administración si está definido', async (
   const data = await conToken.json();
   assert.equal(data.ok, true);
 });
+
+test('cierre: close() detiene el servidor y libera el puerto', async () => {
+  const { instance } = await boot();
+  assert.equal(instance.server.listening, true);
+
+  await instance.close();
+  assert.equal(instance.server.listening, false);
+
+  // Un segundo cierre no debe lanzar.
+  await instance.close();
+});
