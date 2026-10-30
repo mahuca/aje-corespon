@@ -72,12 +72,18 @@ const SCHEMA = [
      jugador TEXT,
      texto TEXT,
      estado TEXT NOT NULL DEFAULT 'pendiente',  -- 'pendiente' | 'enviado' | 'fallido'
+     intentos INT NOT NULL DEFAULT 0,
+     proximo_intento TIMESTAMPTZ,   -- backoff: no reintentar antes de esta hora
+     ultimo_intento TIMESTAMPTZ,
      enviado_en TIMESTAMPTZ,
      error TEXT
    )`,
 
   `ALTER TABLE corespon_notificaciones ADD COLUMN IF NOT EXISTS jugador TEXT`,
   `ALTER TABLE corespon_notificaciones ADD COLUMN IF NOT EXISTS texto TEXT`,
+  `ALTER TABLE corespon_notificaciones ADD COLUMN IF NOT EXISTS intentos INT NOT NULL DEFAULT 0`,
+  `ALTER TABLE corespon_notificaciones ADD COLUMN IF NOT EXISTS proximo_intento TIMESTAMPTZ`,
+  `ALTER TABLE corespon_notificaciones ADD COLUMN IF NOT EXISTS ultimo_intento TIMESTAMPTZ`,
 
   `CREATE TABLE IF NOT EXISTS corespon_resultados (
      blancas TEXT NOT NULL,
@@ -160,6 +166,9 @@ function emptyNotificacion(record) {
     jugador: record.jugador || null,
     texto: record.texto || null,
     estado: record.estado,
+    intentos: Number(record.intentos || 0),
+    proximoIntento: iso(record.proximoIntento || record.proximo_intento),
+    ultimoIntento: iso(record.ultimoIntento || record.ultimo_intento),
     enviadoEn: iso(record.enviadoEn || record.enviado_en),
     error: record.error || null
   };
@@ -317,6 +326,9 @@ function createMemoryStore() {
         jugador: notif.jugador || null,
         texto: notif.texto || null,
         estado: 'pendiente',
+        intentos: 0,
+        proximoIntento: null,
+        ultimoIntento: null,
         enviadoEn: null,
         error: null
       };
@@ -325,21 +337,58 @@ function createMemoryStore() {
     },
 
     async getNotificacionesPendientes(limit = 200) {
+      const ahora = Date.now();
       return notificaciones
         .filter(n => n.estado === 'pendiente')
+        .filter(n => !n.proximoIntento || Date.parse(n.proximoIntento) <= ahora)
         .sort((a, b) => a.id - b.id)
         .slice(0, limit)
         .map(emptyNotificacion);
     },
 
-    async marcaNotificacionComoEnviada(id, error = null) {
-      const n = notificaciones.find(x => x.id === id);
-      if (n) {
-        n.estado = error ? 'fallido' : 'enviado';
-        n.enviadoEn = new Date().toISOString();
-        n.error = error;
+    async getNotificacionesRecientes(limit = 100, estado = null) {
+      return notificaciones
+        .filter(n => !estado || n.estado === estado)
+        .sort((a, b) => b.id - a.id)
+        .slice(0, limit)
+        .map(emptyNotificacion);
+    },
+
+    async resumenNotificaciones() {
+      const resumen = { pendiente: 0, enviado: 0, fallido: 0 };
+      for (const n of notificaciones) {
+        if (resumen[n.estado] !== undefined) resumen[n.estado] += 1;
       }
-      return n;
+      return resumen;
+    },
+
+    /*
+     * Registra el resultado de un intento. Sin error -> enviado; con error y
+     * `proximoIntento` -> sigue pendiente (backoff); con error y sin fecha ->
+     * fallido definitivo. Devuelve la notificación actualizada.
+     */
+    async marcaNotificacionComoEnviada(id, error = null, proximoIntento = null) {
+      const n = notificaciones.find(x => x.id === id);
+      if (!n) return null;
+
+      const ahora = new Date().toISOString();
+      n.intentos = (n.intentos || 0) + 1;
+      n.ultimoIntento = ahora;
+      n.error = error || null;
+
+      if (!error) {
+        n.estado = 'enviado';
+        n.proximoIntento = null;
+        n.enviadoEn = ahora;
+      } else if (proximoIntento) {
+        n.estado = 'pendiente';
+        n.proximoIntento = proximoIntento;
+      } else {
+        n.estado = 'fallido';
+        n.proximoIntento = null;
+        n.enviadoEn = ahora;
+      }
+      return emptyNotificacion(n);
     },
 
     // --- Estadísticas ---
@@ -589,11 +638,12 @@ function createPostgresStore(connectionString, options = {}) {
       await init();
       const { rows } = await pool.query(
         `INSERT INTO corespon_notificaciones
-          (room_code, tipo, destinatario, jugador, texto, estado, enviado_en, error)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+          (room_code, tipo, destinatario, jugador, texto, estado, intentos, enviado_en, error)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
         [notif.roomCode || null, notif.tipo, notif.destinatario || null,
          notif.jugador || null, notif.texto || null,
-         notif.estado || 'pendiente', notif.enviadoEn || null, notif.error || null]
+         notif.estado || 'pendiente', notif.intentos || 0,
+         notif.enviadoEn || null, notif.error || null]
       );
       return emptyNotificacion(rows[0]);
     },
@@ -601,21 +651,56 @@ function createPostgresStore(connectionString, options = {}) {
     async getNotificacionesPendientes(limit = 200) {
       await init();
       const { rows } = await pool.query(
-        `SELECT * FROM corespon_notificaciones WHERE estado = 'pendiente'
+        `SELECT * FROM corespon_notificaciones
+         WHERE estado = 'pendiente'
+           AND (proximo_intento IS NULL OR proximo_intento <= now())
          ORDER BY id ASC LIMIT $1`,
         [limit]
       );
       return rows.map(emptyNotificacion);
     },
 
-    async marcaNotificacionComoEnviada(id, error = null) {
+    async getNotificacionesRecientes(limit = 100, estado = null) {
+      await init();
+      const { rows } = await pool.query(
+        `SELECT * FROM corespon_notificaciones
+         WHERE ($2::text IS NULL OR estado = $2)
+         ORDER BY id DESC LIMIT $1`,
+        [limit, estado || null]
+      );
+      return rows.map(emptyNotificacion);
+    },
+
+    async resumenNotificaciones() {
+      await init();
+      const { rows } = await pool.query(
+        `SELECT estado, COUNT(*)::int AS total
+         FROM corespon_notificaciones GROUP BY estado`
+      );
+      const resumen = { pendiente: 0, enviado: 0, fallido: 0 };
+      for (const row of rows) {
+        if (resumen[row.estado] !== undefined) resumen[row.estado] = row.total;
+      }
+      return resumen;
+    },
+
+    async marcaNotificacionComoEnviada(id, error = null, proximoIntento = null) {
       await init();
       const { rows } = await pool.query(
         `UPDATE corespon_notificaciones
-         SET estado = CASE WHEN $2 IS NOT NULL THEN 'fallido' ELSE 'enviado' END,
-             enviado_en = now(), error = $2
+         SET intentos = intentos + 1,
+             ultimo_intento = now(),
+             error = $2,
+             estado = CASE
+               WHEN $2 IS NULL THEN 'enviado'
+               WHEN $3::timestamptz IS NOT NULL THEN 'pendiente'
+               ELSE 'fallido'
+             END,
+             proximo_intento = $3::timestamptz,
+             enviado_en = CASE WHEN $2 IS NULL OR $3::timestamptz IS NULL
+                               THEN now() ELSE enviado_en END
          WHERE id = $1 RETURNING *`,
-        [id, error]
+        [id, error || null, proximoIntento || null]
       );
       return rows.length ? emptyNotificacion(rows[0]) : null;
     },

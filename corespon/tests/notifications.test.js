@@ -159,3 +159,91 @@ test('cola: sin Telegram configurado no se encola nada', async () => {
     if (previo.chat !== undefined) process.env.TELEGRAM_CHAT_ID = previo.chat;
   }
 });
+
+test('cola: reintenta con backoff y acaba en fallido', async () => {
+  const store = createMemoryStore();
+  let intentos = 0;
+  const gateway = new WhatsAppGateway({
+    store,
+    providerName: 'fake',
+    retryDelaysMs: [0, 0],
+    provider: async () => {
+      intentos += 1;
+      throw new Error('telegram caido');
+    }
+  });
+
+  const room = new Room('ABC234', 'Manuel', 'Fernan');
+  await gateway.enqueue(
+    room.code, 'turno', { nombre: 'Manuel' },
+    turnoMsg(room, 'white', 'https://x').vars, 'https://x'
+  );
+
+  await gateway.processQueue();
+  let [notif] = await store.getNotificacionesRecientes(10);
+  assert.equal(notif.estado, 'pendiente');
+  assert.equal(notif.intentos, 1);
+  assert.match(notif.error, /telegram caido/);
+
+  await gateway.processQueue();
+  [notif] = await store.getNotificacionesRecientes(10);
+  assert.equal(notif.estado, 'pendiente');
+  assert.equal(notif.intentos, 2);
+
+  await gateway.processQueue();
+  [notif] = await store.getNotificacionesRecientes(10);
+  assert.equal(notif.estado, 'fallido');
+  assert.equal(notif.intentos, 3);
+  assert.equal((await store.getNotificacionesPendientes()).length, 0);
+  assert.deepEqual(await store.resumenNotificaciones(), { pendiente: 0, enviado: 0, fallido: 1 });
+  assert.equal(intentos, 3);
+});
+
+test('cola: el backoff evita reintentos inmediatos', async () => {
+  const store = createMemoryStore();
+  const gateway = new WhatsAppGateway({
+    store,
+    providerName: 'fake',
+    provider: async () => { throw new Error('sin red'); }
+  });
+
+  const room = new Room('ABC234', 'Manuel', 'Fernan');
+  await gateway.enqueue(
+    room.code, 'turno', { nombre: 'Manuel' },
+    turnoMsg(room, 'white', 'https://x').vars, 'https://x'
+  );
+
+  await gateway.processQueue();
+  const [notif] = await store.getNotificacionesRecientes(10);
+  assert.equal(notif.estado, 'pendiente');
+  assert.ok(Date.parse(notif.proximoIntento) > Date.now() + 30 * 1000);
+
+  assert.equal((await store.getNotificacionesPendientes()).length, 0);
+  assert.equal((await gateway.processQueue()).processed, 0);
+});
+
+test('cola: el resumen cuenta pendientes, enviados y fallidos', async () => {
+  const store = createMemoryStore();
+  const room = new Room('ABC234', 'Manuel', 'Fernan');
+  const base = turnoMsg(room, 'white', 'https://x').vars;
+
+  const gateway = new WhatsAppGateway({
+    store,
+    providerName: 'fake',
+    retryDelaysMs: [],
+    maxIntentos: 1,
+    provider: async (text, destino) => {
+      if (destino.nombre === 'Fernan') throw new Error('no');
+      return { id: '1' };
+    }
+  });
+
+  await gateway.enqueue(room.code, 'turno', { nombre: 'Manuel' }, base, 'https://x');
+  await gateway.enqueue(room.code, 'turno', { nombre: 'Fernan' }, base, 'https://x');
+
+  await gateway.processQueue();
+
+  assert.deepEqual(await store.resumenNotificaciones(), { pendiente: 0, enviado: 1, fallido: 1 });
+  assert.equal((await store.getNotificacionesRecientes(10, 'enviado')).length, 1);
+  assert.equal((await store.getNotificacionesRecientes(10, 'fallido')).length, 1);
+});

@@ -532,7 +532,7 @@ function createServer(options = {}) {
   // 4. Procesa colas de WhatsApp
   timers.push(setInterval(async () => {
     const res = await gateway.processQueue(50);
-    if (res.processed) log('Notificaciones WhatsApp enviadas:', res.processed);
+    if (res.processed) log('Notificaciones procesadas:', res.processed);
   }, 60 * 1000));
 
   // ============================ RUTAS + SERVIDOR ============================
@@ -540,10 +540,24 @@ function createServer(options = {}) {
   app.get('/corespon', (req, res) => res.sendFile(coresponFile));
   app.get('/corespon/:code', (req, res) => res.sendFile(coresponFile));
 
+  /*
+   * Visibilidad de la cola: ?estado=pendiente|enviado|fallido y recuento por
+   * estado. Si existe ADMIN_TOKEN, exige la cabecera x-admin-token.
+   */
   app.get('/api/whatsapp/queue', async (req, res) => {
     try {
-      const all = await store.getNotificacionesPendientes(100);
-      res.json({ ok: true, notificaciones: all });
+      const adminToken = process.env.ADMIN_TOKEN;
+      if (adminToken && req.get('x-admin-token') !== adminToken) {
+        return res.status(401).json({ ok: false, error: 'No autorizado' });
+      }
+
+      const estados = ['pendiente', 'enviado', 'fallido'];
+      const filtro = estados.includes(req.query.estado) ? req.query.estado : null;
+      const [notificaciones, resumen] = await Promise.all([
+        store.getNotificacionesRecientes(100, filtro),
+        store.resumenNotificaciones()
+      ]);
+      res.json({ ok: true, estado: filtro || 'todas', resumen, notificaciones });
     } catch (error) {
       res.status(500).json({ ok: false, error: error.message });
     }

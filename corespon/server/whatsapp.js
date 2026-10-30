@@ -273,6 +273,12 @@ class WhatsAppGateway {
     this.store = options.store || createStore();
     this.debug = !!options.debug;
 
+    // Reintentos: espera tras el 1.er y 2.º fallo; al agotarlos queda 'fallido'.
+    this.retryDelaysMs = Array.isArray(options.retryDelaysMs)
+      ? options.retryDelaysMs
+      : [60 * 1000, 5 * 60 * 1000];
+    this.maxIntentos = options.maxIntentos || this.retryDelaysMs.length + 1;
+
     if (this.providerName === 'telegram' && !this.ready && this.debug) {
       console.warn('[notificaciones] Telegram sin configurar: define TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID');
     }
@@ -360,8 +366,21 @@ class WhatsAppGateway {
         continue;
       }
       const res = await this._sendText(n.texto, { nombre: n.jugador, whatsapp: n.destinatario });
-      await this.store.marcaNotificacionComoEnviada(n.id, res.error || null);
-      results.push({ ...n, ...res });
+
+      // Backoff: un fallo no descarta el mensaje, pero tampoco se reintenta en
+      // cada pasada de la cola. Tras `maxIntentos` queda como fallido.
+      let proximoIntento = null;
+      if (!res.ok) {
+        const intentos = (n.intentos || 0) + 1;
+        if (intentos < this.maxIntentos) {
+          const idx = Math.min(intentos - 1, this.retryDelaysMs.length - 1);
+          const espera = this.retryDelaysMs[idx] || 0;
+          proximoIntento = new Date(Date.now() + espera).toISOString();
+        }
+      }
+
+      await this.store.marcaNotificacionComoEnviada(n.id, res.error || null, proximoIntento);
+      results.push({ ...n, ...res, proximoIntento, estado: res.ok ? 'enviado' : (proximoIntento ? 'pendiente' : 'fallido') });
     }
     return { processed: results.length, results };
   }

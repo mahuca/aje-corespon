@@ -50,7 +50,9 @@ Verificación: `npm test` (47 pruebas).
       el texto ya renderizado (sin `undefined`).
 - [x] C4. Ids en el store en memoria (antes las notificaciones se reenviaban
       cada minuto para siempre).
-- [ ] C5. Reintentos con backoff y visibilidad pendiente/enviado/fallido.
+- [x] C5. Reintentos con backoff (1 y 5 min, 3 intentos) y visibilidad
+      pendiente/enviado/fallido en `GET /api/whatsapp/queue?estado=`, con
+      `ADMIN_TOKEN` opcional.
 - [x] C6. Sustituir CallMeBot por Telegram: bot + grupo (`TELEGRAM_BOT_TOKEN`,
       `TELEGRAM_CHAT_ID`) con chat privado opcional por jugador
       (`TELEGRAM_CHAT_<JUGADOR>`).

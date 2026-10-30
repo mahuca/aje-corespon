@@ -415,3 +415,59 @@ test('notificaciones: las jugadas encolan mensajes completos y se envían una ve
   assert.ok(enviados.length >= 3);
   assert.equal((await store.getNotificacionesPendientes()).length, 0);
 });
+
+test('api: la cola de notificaciones filtra por estado y muestra el resumen', async (t) => {
+  const store = createMemoryStore();
+  const gateway = new WhatsAppGateway({
+    store, providerName: 'fake', provider: async () => ({ id: 'x' })
+  });
+  const { instance, base } = await boot(store, { gateway });
+  t.after(() => cleanup(instance));
+
+  await store.addNotificacion({
+    roomCode: 'ABC234', tipo: 'turno', destinatario: '+34600000000',
+    jugador: 'Manuel', texto: 'Te toca mover en ABC234'
+  });
+
+  const todas = await fetch(`${base}/api/whatsapp/queue`).then(r => r.json());
+  assert.equal(todas.ok, true);
+  assert.equal(todas.estado, 'todas');
+  assert.equal(todas.resumen.pendiente, 1);
+  assert.equal(todas.notificaciones.length, 1);
+
+  await gateway.processQueue();
+
+  const enviadas = await fetch(`${base}/api/whatsapp/queue?estado=enviado`).then(r => r.json());
+  assert.equal(enviadas.estado, 'enviado');
+  assert.equal(enviadas.resumen.enviado, 1);
+  assert.ok(enviadas.notificaciones.every(n => n.estado === 'enviado'));
+
+  const pendientes = await fetch(`${base}/api/whatsapp/queue?estado=pendiente`).then(r => r.json());
+  assert.equal(pendientes.notificaciones.length, 0);
+
+  const invalido = await fetch(`${base}/api/whatsapp/queue?estado=inventado`).then(r => r.json());
+  assert.equal(invalido.estado, 'todas');
+});
+
+test('api: la cola exige el token de administración si está definido', async (t) => {
+  const previo = process.env.ADMIN_TOKEN;
+  process.env.ADMIN_TOKEN = 'secreto-de-prueba';
+  t.after(() => {
+    if (previo === undefined) delete process.env.ADMIN_TOKEN;
+    else process.env.ADMIN_TOKEN = previo;
+  });
+
+  const store = createMemoryStore();
+  const { instance, base } = await boot(store);
+  t.after(() => cleanup(instance));
+
+  const sinToken = await fetch(`${base}/api/whatsapp/queue`);
+  assert.equal(sinToken.status, 401);
+
+  const conToken = await fetch(`${base}/api/whatsapp/queue`, {
+    headers: { 'x-admin-token': 'secreto-de-prueba' }
+  });
+  assert.equal(conToken.status, 200);
+  const data = await conToken.json();
+  assert.equal(data.ok, true);
+});
