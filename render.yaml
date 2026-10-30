@@ -11,7 +11,6 @@ services:
     # Liveness sin base de datos; la readiness está en /api/status.
     healthCheckPath: /healthz
     autoDeployTrigger: commit
-    maxShutdownDelaySeconds: 30
     envVars:
       - key: NODE_VERSION
         value: "24"

@@ -85,15 +85,45 @@ curl -H "x-admin-token: $ADMIN_TOKEN" \
 
 ## Despliegue en Render
 
-El repo incluye `render.yaml` con:
+Servicio ya creado: **`aje-corespon`** → <https://aje-corespon.onrender.com>
+(plan free, región `oregon`, misma que Neon `us-west-2`).
 
-- `buildCommand: npm install`
+`render.yaml` describe el servicio:
+
+- `buildCommand: npm ci --omit=dev`
 - `startCommand: node server.js`
-- `TZ=Europe/Madrid` y las variables de Telegram (marcadas como secretas).
+- `healthCheckPath: /healthz` (liveness sin base de datos)
+- `TZ=Europe/Madrid` y `NOTIFY_PROVIDER=telegram`
 
-Define `DATABASE_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` y
-`ADMIN_TOKEN` en el panel de Render. El servidor cierra limpiamente con
-`SIGTERM`.
+Variables que deben existir en el panel **Environment**:
+
+| Variable | Estado |
+| --- | --- |
+| `DATABASE_URL` | configurada (Neon, `/neondb`). |
+| `ADMIN_TOKEN` | configurada; protege `/api/whatsapp/queue`. |
+| `TELEGRAM_BOT_TOKEN` | **pendiente**: sin ella no se envían avisos. |
+| `TELEGRAM_CHAT_ID` | **pendiente**: id del grupo. |
+
+El roster (6 jugadores, Abuelo administrador) se crea solo al arrancar; no
+hace falta ejecutar `npm run init-db` en producción.
+
+Comprobación rápida:
+
+```bash
+curl https://aje-corespon.onrender.com/healthz
+# {"ok":true,"servicio":"aje-corespon","storage":"postgres",...}
+
+curl https://aje-corespon.onrender.com/api/status
+curl https://aje-corespon.onrender.com/api/players
+```
+
+Cambiar una variable de entorno en Render **no redespliega solo**: pulsa
+**Manual Deploy → Deploy latest commit** (o `render deploys create <service>`)
+después de guardarla.
+
+> El servicio antiguo `ajedrez-online` sigue apuntando al repo anterior y usa
+> la misma base Neon. Conviene suspenderlo para que no haya dos instancias
+> escribiendo en las mismas tablas.
 
 ## API
 
@@ -106,7 +136,8 @@ Define `DATABASE_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` y
 | `GET /api/partidas/:code` | Estado de una partida. |
 | `POST /api/partidas/invitar` | Crea una invitación. |
 | `GET /api/classification` | Clasificación. |
-| `GET /api/status` | Estadísticas y salud. |
+| `GET /healthz` | Liveness (no toca la base de datos). |
+| `GET /api/status` | Estadísticas y salud (consulta Postgres). |
 | `GET /api/whatsapp/queue` | Cola de notificaciones (`?estado=`, con `ADMIN_TOKEN`). |
 
 El juego en tiempo real usa **Socket.IO** (`corespon:join`, `corespon:move`,
