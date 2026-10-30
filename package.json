@@ -14,13 +14,14 @@
     "node": ">=20"
   },
   "dependencies": {
-    "express": "^4.21.2",
-    "socket.io": "^4.8.1",
-    "pg": "^8.23.1",
     "chess.js": "^1.4.0",
+    "express": "^4.21.2",
+    "pg": "^8.23.1",
+    "socket.io": "^4.8.1",
     "undici": "^7.0.0"
   },
   "devDependencies": {
+    "pg-mem": "^3.0.14",
     "socket.io-client": "^4.8.1"
   }
 }

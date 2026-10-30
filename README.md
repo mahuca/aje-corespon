@@ -39,8 +39,10 @@ npm run init-db
 npm test
 ```
 
-No necesitan base de datos ni red: usan el store en memoria y un proveedor de
-notificaciones falso.
+No necesitan base de datos ni red: usan el store en memoria, un proveedor de
+notificaciones falso y **pg-mem** para ejecutar el esquema y las consultas de
+PostgreSQL sin levantar un servidor. Aun así, conviene probar contra Neon antes
+de confiar en una migración.
 
 ## Variables de entorno
 

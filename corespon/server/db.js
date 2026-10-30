@@ -151,7 +151,7 @@ function emptyProrroga(record) {
     roomCode: record.room_code,
     jugador: record.jugador,
     motivo: record.motivo || null,
-    solicitadoEn: record.solicitadoEn || new Date(record.solicitado_en).toISOString(),
+    solicitadoEn: iso(record.solicitadoEn || record.solicitado_en),
     concedidaEn: record.concedidaEn ? new Date(record.concedida_en).toISOString() : null,
     nuevaFecha: record.nuevaFecha ? new Date(record.nueva_fecha).toISOString() : null
   };
@@ -406,8 +406,9 @@ function createMemoryStore() {
 // ============================ ALMACENAMIENTO POSTGRES ============================
 
 function createPostgresStore(connectionString, options = {}) {
+  // `options.pg` permite inyectar un adaptador compatible (pruebas con pg-mem).
   // eslint-disable-next-line global-require
-  const { Pool } = require('pg');
+  const { Pool } = options.pg || require('pg');
   const local = /localhost|127\.0\.0\.1/.test(connectionString);
   const pool = new Pool({
     connectionString,
@@ -482,22 +483,30 @@ function createPostgresStore(connectionString, options = {}) {
     async initRoster(names, adminNames = []) {
       await init();
       const admins = new Set(adminNames.map(nombre => nombre.toLowerCase()));
-      await pool.query('BEGIN');
+
+      // BEGIN/COMMIT deben ir por la misma conexión: pool.query() puede
+      // repartirlas entre clientes distintos y dejar el roster a medias.
+      const client = await pool.connect();
       try {
+        await client.query('BEGIN');
         for (const nombre of names) {
           const id = nombre.toLowerCase();
-          await pool.query(
+          await client.query(
             `INSERT INTO corespon_players (id, nombre, activa, admin)
              VALUES ($1, $2, TRUE, $3)
              ON CONFLICT (id) DO UPDATE SET admin = (corespon_players.admin OR EXCLUDED.admin)`,
             [id, nombre, admins.has(id)]
           );
         }
-        await pool.query('COMMIT');
+        await client.query('COMMIT');
       } catch (err) {
-        await pool.query('ROLLBACK');
+        await client.query('ROLLBACK').catch(() => {});
         throw err;
+      } finally {
+        client.release();
       }
+
+      return this.getPlayers();
     },
 
     // --- Partidas ---
@@ -707,19 +716,18 @@ function createPostgresStore(connectionString, options = {}) {
 
     async obtenerEstadisticas() {
       await init();
-      const { rows } = await pool.query(`
-        SELECT
-          (SELECT COUNT(*)::int FROM corespon_partidas WHERE estado = 'abierta') AS partidas_abiertas,
-          (SELECT COUNT(*)::int FROM corespon_resultados) AS partidas_totales,
-          (SELECT COUNT(*)::int FROM corespon_players WHERE activa) AS jugadores,
-          (SELECT COUNT(*)::int FROM corespon_notificaciones WHERE estado = 'pendiente') AS notificaciones_pendientes
-      `);
-      const row = rows[0] || {};
+      const [abiertas, totales, jugadores, pendientes] = await Promise.all([
+        pool.query(`SELECT COUNT(*)::int AS total FROM corespon_partidas WHERE estado = 'abierta'`),
+        pool.query(`SELECT COUNT(*)::int AS total FROM corespon_resultados`),
+        pool.query(`SELECT COUNT(*)::int AS total FROM corespon_players WHERE activa`),
+        pool.query(`SELECT COUNT(*)::int AS total FROM corespon_notificaciones WHERE estado = 'pendiente'`)
+      ]);
+      const total = (res) => (res.rows[0] && res.rows[0].total) || 0;
       return {
-        partidasAbiertas: row.partidas_abiertas || 0,
-        partidasTotales: row.partidas_totales || 0,
-        jugadores: row.jugadores || 0,
-        notificacionesPendientes: row.notificaciones_pendientes || 0
+        partidasAbiertas: total(abiertas),
+        partidasTotales: total(totales),
+        jugadores: total(jugadores),
+        notificacionesPendientes: total(pendientes)
       };
     }
   };
