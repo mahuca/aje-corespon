@@ -1,0 +1,14 @@
+# Dependencias
+node_modules/
+
+# Configuración local (los secretos no se versionan)
+.env
+.env.local
+
+# Registros y temporales
+*.log
+npm-debug.log*
+.DS_Store
+
+# Proyecto ajeno clonado dentro del repo (antes gitlink sin .gitmodules)
+online-chess/
