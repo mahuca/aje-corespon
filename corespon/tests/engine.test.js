@@ -316,27 +316,43 @@ test('db: memoria registra jugadores sin duplicados', async () => {
 
 // ---- clasificación y revancha ----
 
-test('clasificación: puntos, partidas y desempates', () => {
+test('clasificación: rating 1500, +25/−25 y desempates', () => {
   const filas = computeClassification([
     { blancas: 'Manuel', negras: 'Fernan', resultado: 'blancas' },
     { blancas: 'Fernan', negras: 'Manuel', resultado: 'tablas' },
     { blancas: 'Alberto', negras: 'Manuel', resultado: 'negras' }
   ]);
 
-  assert.deepEqual(filas.map(f => f.nombre), ['Manuel', 'Fernan', 'Alberto']);
+  // Manuel: +25 (victoria), 0 (tablas) y +25 (victoria con negras) = 1550
+  // Alberto y Fernan: 1475, empatados a victorias; desempata el nombre.
+  assert.deepEqual(filas.map(f => f.nombre), ['Manuel', 'Alberto', 'Fernan']);
 
   const manuel = filas[0];
+  assert.equal(manuel.rating, 1550);
   assert.equal(manuel.partidas, 3);
-  assert.equal(manuel.puntos, 2.5);
   assert.equal(manuel.victorias, 2);
   assert.equal(manuel.empates, 1);
   assert.equal(manuel.derrotas, 0);
 
-  assert.equal(filas[1].puntos, 0.5);
-  assert.equal(filas[2].puntos, 0);
+  assert.equal(filas[1].rating, 1475);
+  assert.equal(filas[1].derrotas, 1);
+  assert.equal(filas[2].rating, 1475);
+
+  // Sistema de suma cero.
+  assert.equal(filas.reduce((total, fila) => total + fila.rating, 0), 1500 * 3);
 });
 
-test('clasificación: sin resultados devuelve una lista vacía', () => {
+test('clasificación: el roster aparece con 1500 aunque no haya jugado', () => {
+  const filas = computeClassification([], [
+    { nombre: 'Manuel' }, { nombre: 'Fernan' }, { nombre: 'Abuelo' }
+  ]);
+
+  assert.equal(filas.length, 3);
+  assert.ok(filas.every(fila => fila.rating === 1500 && fila.partidas === 0));
+  assert.deepEqual(filas.map(fila => fila.nombre), ['Abuelo', 'Fernan', 'Manuel']);
+});
+
+test('clasificación: sin resultados ni roster devuelve una lista vacía', () => {
   assert.deepEqual(computeClassification([]), []);
   assert.deepEqual(computeClassification(null), []);
 });

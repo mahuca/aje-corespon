@@ -29,8 +29,9 @@ Verificación: `npm test` (77 pruebas, incluidas las de PostgreSQL con pg-mem).
 
 ## Fase B — Resultados, clasificación y revancha (completada)
 
-- [x] B1. `GET /api/classification` calculada desde `corespon_resultados`
-      (victoria 1, tablas 0.5; orden por puntos, victorias y nombre).
+- [x] B1. `GET /api/classification` calculada desde `corespon_resultados`.
+      Actualizado: ranking 1500 ±25 (victoria +25, derrota −25, tablas 0),
+      con todo el roster visible y desempate por rating, victorias y nombre.
 - [x] B2. Resultado guardado una sola vez al terminar (jugada, tiempo o
       rendición) y `addProrroga` al prorrogar.
 - [x] B3. Revancha con votos, intercambio de colores (`corespon:color`) y
@@ -87,6 +88,8 @@ Verificación: `npm test` (77 pruebas, incluidas las de PostgreSQL con pg-mem).
   por perdida.
 - **Prórrogas:** +1 día, máximo 3, solo el jugador del turno y antes de caducar.
 - **Invitaciones:** cada jugador crea su sala; el rival entra por código/enlace.
+- **Ranking:** base 1500; victoria +25, derrota −25, tablas 0. Se calcula
+  desde los resultados (no se guarda una columna de rating).
 - **Revanchas:** en la misma sala, con intercambio de colores.
 - **Estado:** vanilla JS/HTML + Socket.IO, sin cuentas de usuario.
 

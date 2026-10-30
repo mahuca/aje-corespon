@@ -1143,7 +1143,7 @@
 
       const thead = document.createElement('thead');
       const headRow = document.createElement('tr');
-      for (const label of ['Jugador', 'Partidas', 'Puntos', 'V', 'E', 'D']) {
+      for (const label of ['Jugador', 'Rating', 'P', 'V', 'E', 'D']) {
         const th = document.createElement('th');
         th.textContent = label;
         headRow.appendChild(th);
@@ -1156,8 +1156,8 @@
         const tr = document.createElement('tr');
         const celdas = [
           fila.nombre,
+          fila.rating,
           fila.partidas,
-          Number(fila.puntos).toFixed(2),
           fila.victorias,
           fila.empates,
           fila.derrotas

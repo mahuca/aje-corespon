@@ -24,7 +24,7 @@ loadEnv();
 
 const { RoomManager, Room, normalizeCode, sameName, PLAZO_DEFAULT_MS, GRACIA_DEFAULT_MS, MAX_PRORROGAS, buildPgn } = require('./rooms');
 const { createStore } = require('./db');
-const { computeClassification } = require('./classification');
+const { computeClassification, RATING_INICIAL } = require('./classification');
 const {
   WhatsAppGateway, INVITACION, TURNO, RECORDATORIO, PRORROGA, TIEMPO, FIN,
   invitacionMsg, turnoMsg, recordatorioMsg, prorrogaMsg, tiempoMsg, finMsg
@@ -362,9 +362,7 @@ function createServer(options = {}) {
           await persistRoom(room);
           io.to(room.code).emit('corespon:room:update', room.toPublic());
 
-          const host = baseUrl(socket);
-          gateway.enqueue(room.code, FIN, room.players.white, finMsg(room, host), host);
-          gateway.enqueue(room.code, FIN, room.players.black, finMsg(room, host), host);
+          notificarFin(room, baseUrl(socket));
         } else {
           await persistRoom(room);
         }
@@ -427,9 +425,7 @@ function createServer(options = {}) {
         const otherColor = room.turnColor() === 'white' ? 'black' : 'white';
         gateway.enqueue(room.code, TURNO, room.players[otherColor], turnoMsg(room, otherColor, host), host);
       } else {
-        const host = baseUrl(socket);
-        gateway.enqueue(room.code, FIN, room.players.white, finMsg(room, host), host);
-        gateway.enqueue(room.code, FIN, room.players.black, finMsg(room, host), host);
+        notificarFin(room, baseUrl(socket));
       }
 
       respond({ ok: true, room: room.toPublic() });
@@ -488,9 +484,7 @@ function createServer(options = {}) {
       await persistRoom(room);
       io.to(room.code).emit('corespon:room:update', room.toPublic());
 
-      const host = baseUrl(socket);
-      gateway.enqueue(room.code, FIN, room.players.white, finMsg(room, host), host);
-      gateway.enqueue(room.code, FIN, room.players.black, finMsg(room, host), host);
+      notificarFin(room, baseUrl(socket));
 
       respond({ ok: true, room: room.toPublic() });
     });
@@ -528,9 +522,7 @@ function createServer(options = {}) {
       await persistRoom(room);
       io.to(room.code).emit('corespon:room:update', room.toPublic());
 
-      const host = baseUrl(socket);
-      gateway.enqueue(room.code, FIN, room.players.white, finMsg(room, host), host);
-      gateway.enqueue(room.code, FIN, room.players.black, finMsg(room, host), host);
+      notificarFin(room, baseUrl(socket));
 
       respond({ ok: true, room: room.toPublic() });
     });
@@ -637,7 +629,7 @@ function createServer(options = {}) {
       const winner = loser === 'white' ? 'black' : 'white';
       const host = baseUrl();
       gateway.enqueue(room.code, TIEMPO, room.players[loser], tiempoMsg(room, loser, host), host);
-      gateway.enqueue(room.code, FIN, room.players[winner], finMsg(room, host), host);
+      notificarFin(room, host);
     }
   }, CHECK_DEADLINE_MS));
 
@@ -717,8 +709,14 @@ function createServer(options = {}) {
 
   app.get('/api/classification', async (req, res) => {
     try {
-      const resultados = await store.getResultados();
-      res.json({ ok: true, clasificacion: computeClassification(resultados) });
+      const [resultados, jugadores] = await Promise.all([
+        store.getResultados(),
+        store.getPlayers()
+      ]);
+      res.json({
+        ok: true,
+        clasificacion: computeClassification(resultados, jugadores)
+      });
     } catch (error) {
       res.status(500).json({ ok: false, error: error.message });
     }
@@ -800,6 +798,38 @@ function createServer(options = {}) {
    * Guarda el resultado definitivo de la partida, una sola vez.
    * Las revanchas reinician la sala, así que cada partida produce su fila.
    */
+  /*
+   * Aviso de fin para los dos asientos, con el rating ya actualizado.
+   * Debe llamarse después de persistRoom(): ahí se guarda el resultado.
+   */
+  async function notificarFin(room, host) {
+    let ratings = '';
+    try {
+      const [resultados, jugadores] = await Promise.all([
+        store.getResultados(),
+        store.getPlayers()
+      ]);
+      const tabla = computeClassification(resultados, jugadores);
+      const porNombre = new Map(tabla.map(fila => [fila.nombre, fila.rating]));
+
+      const blancas = room.players.white && room.players.white.name;
+      const negras = room.players.black && room.players.black.name;
+      if (blancas && negras) {
+        const ratingBlancas = porNombre.has(blancas)
+          ? porNombre.get(blancas) : RATING_INICIAL;
+        const ratingNegras = porNombre.has(negras)
+          ? porNombre.get(negras) : RATING_INICIAL;
+        ratings = `${blancas} ${ratingBlancas} · ${negras} ${ratingNegras}`;
+      }
+    } catch (error) {
+      if (!quiet) console.error('[corespon] No se pudo calcular el rating:', error.message);
+    }
+
+    const mensaje = finMsg(room, host, { ratings });
+    gateway.enqueue(room.code, FIN, room.players.white, mensaje, host);
+    gateway.enqueue(room.code, FIN, room.players.black, mensaje, host);
+  }
+
   async function registrarResultado(room) {
     if (!room.status.over || room.resultadoGuardado) return null;
     room.resultadoGuardado = true;

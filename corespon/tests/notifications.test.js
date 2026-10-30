@@ -273,3 +273,16 @@ test('cola: un fallo al guardar el estado no rechaza processQueue', async () => 
 
   store.marcaNotificacionComoEnviada = original;
 });
+
+test('mensajes: el fin incluye el rating cuando se pasa', async () => {
+  const room = new Room('ABC234', 'Manuel', 'Fernan');
+  room.rendir('black');
+
+  const mensaje = finMsg(room, 'https://aje.example', {
+    ratings: 'Manuel 1525 · Fernan 1475'
+  });
+  const texto = await formatMessage(mensaje.tipo, mensaje.vars, 'https://aje.example');
+
+  assert.match(texto, /Manuel gana/);
+  assert.match(texto, /Rating: Manuel 1525 · Fernan 1475/);
+});

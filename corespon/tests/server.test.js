@@ -290,12 +290,20 @@ test('resultados: rendirse guarda el resultado, la clasificación y el estado', 
 
   const classification = await fetch(base + '/api/classification').then(r => r.json());
   assert.equal(classification.ok, true);
-  assert.equal(classification.clasificacion.length, 2);
-  assert.equal(classification.clasificacion[0].nombre, 'Manuel');
-  assert.equal(classification.clasificacion[0].puntos, 1);
-  assert.equal(classification.clasificacion[0].victorias, 1);
-  assert.equal(classification.clasificacion[1].nombre, 'Fernan');
-  assert.equal(classification.clasificacion[1].derrotas, 1);
+  // Los 6 del roster aparecen aunque solo dos hayan jugado.
+  assert.equal(classification.clasificacion.length, 6);
+
+  const manuel = classification.clasificacion.find(f => f.nombre === 'Manuel');
+  assert.equal(manuel.rating, 1525);
+  assert.equal(manuel.victorias, 1);
+
+  const fernan = classification.clasificacion.find(f => f.nombre === 'Fernan');
+  assert.equal(fernan.rating, 1475);
+  assert.equal(fernan.derrotas, 1);
+
+  const resto = classification.clasificacion.filter(f => !['Manuel', 'Fernan'].includes(f.nombre));
+  assert.equal(resto.length, 4);
+  assert.ok(resto.every(f => f.rating === 1500));
 
   const status = await fetch(base + '/api/status').then(r => r.json());
   assert.equal(status.ok, true);
@@ -691,4 +699,38 @@ test('admin: borrar una partida exige token y la elimina', async (t) => {
 
   const lista = await fetch(`${base}/api/partidas`).then(r => r.json());
   assert.equal(lista.partidas.length, 0);
+});
+
+test('notificaciones: el fin de partida incluye el rating', async (t) => {
+  const store = createMemoryStore();
+  const enviados = [];
+  const gateway = new WhatsAppGateway({
+    store,
+    providerName: 'fake',
+    provider: async (text) => {
+      enviados.push(text);
+      return { id: 'mensaje' };
+    }
+  });
+
+  const { instance, port, base } = await boot(store, { gateway });
+  t.after(() => cleanup(instance));
+
+  const { room } = await invite(base);
+  const white = await connect(port);
+  const black = await connect(port);
+  await request(white, 'corespon:join', { code: room.code, name: 'Manuel' });
+  await request(black, 'corespon:join', { code: room.code, name: 'Fernan' });
+
+  const resign = await request(black, 'corespon:resign', { code: room.code });
+  assert.equal(resign.ok, true);
+  await wait(80);
+
+  const fin = (await store.getNotificacionesPendientes())
+    .filter(n => n.tipo === 'fin');
+  assert.equal(fin.length, 2);
+  for (const notif of fin) {
+    assert.match(notif.texto, /Manuel 1525/);
+    assert.match(notif.texto, /Fernan 1475/);
+  }
 });

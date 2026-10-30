@@ -61,8 +61,8 @@ const MESSAGES = {
     '☠ *Tiempo agotado*\n\n${jugador} ha perdido por tiempo la partida ${code}.',
 
   fin:
-    '♟ *Partida terminada*\n\n${resultado} en la partida ${code}.\n\n' +
-    '¿Aceptar revancha?'
+    '♟ *Partida terminada*\n\n${resultado} en la partida ${code}.${ratingLine}' +
+    '\n\n¿Aceptar revancha?'
 };
 
 // ============================ TELEGRAM ============================
@@ -482,12 +482,17 @@ function tiempoMsg(room, perdedor, host) {
   };
 }
 
-function finMsg(room, host) {
+function finMsg(room, host, extra = {}) {
   const ganador = room.status.winner === 'white' ? room.players.white.name
     : room.status.winner === 'black' ? room.players.black.name : null;
   const perdedor = room.status.winner === 'white' ? room.players.black.name
     : room.status.winner === 'black' ? room.players.white.name : null;
   const resultado = ganador ? `${ganador} gana` : 'Tablas';
+
+  // Línea opcional con el rating: "Manuel 1525 · Fernan 1475".
+  const ratings = extra.ratings || '';
+  const ratingLine = ratings ? `\n\nRating: ${ratings}` : '';
+
   return {
     tipo: 'fin',
     vars: {
@@ -495,6 +500,8 @@ function finMsg(room, host) {
       ganador: ganador || '',
       perdedor: perdedor || '',
       resultado,
+      ratings,
+      ratingLine,
       host
     }
   };

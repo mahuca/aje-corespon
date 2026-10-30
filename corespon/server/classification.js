@@ -1,13 +1,20 @@
 'use strict';
 
 /*
- * Clasificación de la liga a partir de los resultados guardados.
+ * Clasificación por rating fijo.
  *
- * Puntuación: victoria 1, tablas 0.5, derrota 0.
- * Desempates: puntos, victorias, nombre.
+ * Todos los jugadores empiezan en 1500. Cada partida decisiva mueve +25 al
+ * ganador y -25 al perdedor; las tablas no cambian el rating. El rating se
+ * calcula siempre desde los resultados guardados, así que no hay una columna
+ * que se pueda desincronizar.
+ *
+ * Desempates: rating, victorias y nombre.
  */
 
-function computeClassification(resultados) {
+const RATING_INICIAL = 1500;
+const RATING_VICTORIA = 25;
+
+function computeClassification(resultados, jugadores = []) {
   const tabla = new Map();
 
   function casilla(nombre) {
@@ -15,14 +22,19 @@ function computeClassification(resultados) {
     if (!tabla.has(nombre)) {
       tabla.set(nombre, {
         nombre,
+        rating: RATING_INICIAL,
         partidas: 0,
-        puntos: 0,
         victorias: 0,
         empates: 0,
         derrotas: 0
       });
     }
     return tabla.get(nombre);
+  }
+
+  // El roster completo aparece aunque todavía no haya jugado nadie.
+  for (const jugador of jugadores || []) {
+    if (jugador && jugador.nombre) casilla(jugador.nombre);
   }
 
   for (const resultado of resultados || []) {
@@ -36,28 +48,28 @@ function computeClassification(resultados) {
       negras.partidas++;
       blancas.empates++;
       negras.empates++;
-      blancas.puntos += 0.5;
-      negras.puntos += 0.5;
+      // Las tablas cuentan como partida pero no mueven el rating.
     } else if (resultado.resultado === 'blancas') {
       blancas.partidas++;
       negras.partidas++;
       blancas.victorias++;
       negras.derrotas++;
-      blancas.puntos += 1;
+      blancas.rating += RATING_VICTORIA;
+      negras.rating -= RATING_VICTORIA;
     } else if (resultado.resultado === 'negras') {
       blancas.partidas++;
       negras.partidas++;
       negras.victorias++;
       blancas.derrotas++;
-      negras.puntos += 1;
+      negras.rating += RATING_VICTORIA;
+      blancas.rating -= RATING_VICTORIA;
     }
   }
 
   return Array.from(tabla.values())
-    .filter(fila => fila.partidas > 0)
-    .sort((a, b) => b.puntos - a.puntos
+    .sort((a, b) => b.rating - a.rating
       || b.victorias - a.victorias
       || a.nombre.localeCompare(b.nombre, 'es'));
 }
 
-module.exports = { computeClassification };
+module.exports = { computeClassification, RATING_INICIAL, RATING_VICTORIA };

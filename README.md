@@ -13,8 +13,8 @@ plazos de días, prórrogas, revancha, clasificación y avisos por Telegram.
 - **Revancha** en la misma sala con intercambio de colores.
 - **Tablas por acuerdo**: un jugador propone y el otro acepta o rechaza.
 - **Modo espectador** con `/corespon/CODE?ver=1`.
-- **Clasificación**: victoria 1, tablas 0,5, derrota 0; desempate por puntos,
-  victorias y nombre.
+- **Ranking**: todos empiezan con **1500**; victoria **+25**, derrota **−25**,
+  tablas **0**. Desempate por rating, victorias y nombre.
 - **Notificaciones por Telegram**: invitación, turno, recordatorio, prórroga,
   tiempo agotado y fin de partida, con reintentos y backoff.
 
@@ -137,7 +137,7 @@ después de guardarla.
 | `GET /api/partidas/:code` | Estado de una partida. |
 | `POST /api/partidas/invitar` | Crea una invitación. |
 | `DELETE /api/partidas/:code` | Borra una partida (solo con `ADMIN_TOKEN`). |
-| `GET /api/classification` | Clasificación. |
+| `GET /api/classification` | Ranking (1500 ±25). |
 | `GET /healthz` | Liveness (no toca la base de datos). |
 | `GET /api/status` | Estadísticas y salud (consulta Postgres). |
 | `GET /api/whatsapp/queue` | Cola de notificaciones (`?estado=`, con `ADMIN_TOKEN`). |
