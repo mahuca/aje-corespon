@@ -1,36 +1,35 @@
 services:
   - type: web
     name: aje-corespon
-    env: node
-    buildCommand: "npm install"
+    runtime: node
+    plan: free
+    # Misma región que Neon (us-west-2): menos latencia por jugada.
+    region: oregon
+    branch: main
+    buildCommand: "npm ci --omit=dev"
     startCommand: "node server.js"
+    # Liveness sin base de datos; la readiness está en /api/status.
+    healthCheckPath: /healthz
+    autoDeployTrigger: commit
+    maxShutdownDelaySeconds: 30
     envVars:
       - key: NODE_VERSION
         value: "24"
-      - key: PORT
-        value: "3001"
       - key: TZ
         value: "Europe/Madrid"
-      - key: DATABASE_URL
-        sync: false
-      # Telegram: bot creado con @BotFather y el chat_id del grupo.
       - key: NOTIFY_PROVIDER
         value: "telegram"
+      # Secretos: se piden al crear el Blueprint o se ponen en el panel.
+      - key: DATABASE_URL
+        sync: false
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_CHAT_ID
         sync: false
-      # Chats privados opcionales (uno por jugador); si no se definen, todo va
-      # al grupo. Las claves siguen el nombre en mayúsculas y sin acentos.
-      - key: TELEGRAM_CHAT_MANUEL
+      - key: ADMIN_TOKEN
         sync: false
-      - key: TELEGRAM_CHAT_FERNAN
-        sync: false
-      - key: TELEGRAM_CHAT_ALBERTO
-        sync: false
-      - key: TELEGRAM_CHAT_ALVARO
-        sync: false
-      - key: TELEGRAM_CHAT_ALEJANDRO
-        sync: false
-      - key: TELEGRAM_CHAT_ABUELO
-        sync: false
+      # Chats privados opcionales por jugador, p. ej.:
+      # - key: TELEGRAM_CHAT_MANUEL
+      #   sync: false
+      # - key: TELEGRAM_CHAT_ABUELO
+      #   sync: false

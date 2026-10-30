@@ -664,6 +664,17 @@ function createServer(options = {}) {
     }
   });
 
+  // Liveness para Render: no toca la base de datos, así una caída de Neon no
+  // provoca reinicios en bucle. La readiness real está en /api/status.
+  app.get('/healthz', (req, res) => {
+    res.json({
+      ok: true,
+      servicio: 'aje-corespon',
+      uptime: Math.round(process.uptime()),
+      storage: store.kind || 'memory'
+    });
+  });
+
   app.get('/api/status', async (req, res) => {
     try {
       const stats = await store.obtenerEstadisticas();

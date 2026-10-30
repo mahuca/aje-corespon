@@ -644,3 +644,17 @@ test('tablas: rechazar mantiene la partida en curso', async (t) => {
   assert.equal(rechazo.room.status.over, false);
   assert.equal(rechazo.room.drawOffer, null);
 });
+
+test('api: /healthz responde sin tocar la base de datos', async (t) => {
+  const { instance, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const res = await fetch(base + '/healthz');
+  assert.equal(res.status, 200);
+
+  const data = await res.json();
+  assert.equal(data.ok, true);
+  assert.equal(data.servicio, 'aje-corespon');
+  assert.equal(data.storage, 'memory');
+  assert.ok(data.uptime >= 0);
+});
