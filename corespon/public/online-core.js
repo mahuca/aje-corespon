@@ -23,6 +23,7 @@
   const listeners = new Map();
   let session = null;
   let room = null;
+  let watching = null;
   let autoResume = false;
   let resumePromise = null;
 
@@ -254,14 +255,17 @@
     const response = await request('corespon:watch', { code: normalized });
     if (!response.ok) return response;
 
+    watching = normalized;
     room = response.room;
     emitLocal('room', room);
     return response;
   }
 
   async function stopWatching() {
-    if (!socket.connected) return Promise.resolve({ ok: true });
-    return request('corespon:unwatch', { code: session.code }, false);
+    const code = watching;
+    watching = null;
+    if (!code || !socket.connected) return Promise.resolve({ ok: true });
+    return request('corespon:unwatch', { code }, false);
   }
 
   async function resume() {

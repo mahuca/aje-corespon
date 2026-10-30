@@ -482,3 +482,38 @@ test('cierre: close() detiene el servidor y libera el puerto', async () => {
   // Un segundo cierre no debe lanzar.
   await instance.close();
 });
+
+test('espectador: recibe la sala y las jugadas, pero no puede mover', async (t) => {
+  const { instance, port, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const { room } = await invite(base);
+  const white = await connect(port);
+  const black = await connect(port);
+  await request(white, 'corespon:join', { code: room.code, name: 'Manuel' });
+  await request(black, 'corespon:join', { code: room.code, name: 'Fernan' });
+
+  const spectator = await connect(port);
+  const watched = await request(spectator, 'corespon:watch', { code: room.code });
+  assert.equal(watched.ok, true);
+  assert.equal(watched.room.code, room.code);
+  assert.equal(watched.room.spectators, 1);
+
+  const update = nextEvent(spectator, 'corespon:room:update');
+  const movida = await request(white, 'corespon:move', {
+    code: room.code, from: [6, 1], to: [4, 1]
+  });
+  assert.equal(movida.ok, true);
+
+  const payload = await update;
+  assert.equal(payload.code, room.code);
+  assert.equal(payload.state.turn, 'black');
+
+  const intento = await request(spectator, 'corespon:move', {
+    code: room.code, from: [1, 1], to: [2, 1]
+  });
+  assert.equal(intento.ok, false);
+
+  const fuera = await request(spectator, 'corespon:unwatch', { code: room.code });
+  assert.equal(fuera.ok, true);
+});

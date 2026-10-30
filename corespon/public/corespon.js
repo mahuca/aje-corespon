@@ -223,12 +223,20 @@
     legalMoves = [];
   }
 
-  function updateUrl(code) {
+  function updateUrl(code, params) {
     try {
-      window.history.replaceState(null, '', code ? '/corespon/' + code : '/corespon');
+      const base = code ? '/corespon/' + code : '/corespon';
+      window.history.replaceState(null, '', base + (code ? (params || '') : ''));
     } catch (error) {
       // history no disponible: no pasa nada
     }
+  }
+
+  // ?ver=1 (o ?espectador=1) abre la partida en modo solo lectura.
+  function watchFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('ver') === '1' || params.get('ver') === 'true') return true;
+    return params.get('espectador') === '1';
   }
 
   // Código de sala desde /corespon/CODE (enlaces de WhatsApp) o ?code=CODE.
@@ -264,7 +272,7 @@
     showGame();
     el.roomCode.textContent = room.code;
     el.waitingCode.textContent = room.code;
-    updateUrl(room.code);
+    updateUrl(room.code, isSpectator ? '?ver=1' : '');
     clearSelection();
     pendingPromotion = null;
     movePending = false;
@@ -454,7 +462,14 @@
     const isYou = !isSpectator && room.state.turn === myColor;
     const over = room.status.over;
 
-    if (isYou && !over) {
+    if (isSpectator && !over) {
+      el.plazoCard.hidden = false;
+      el.plazoIcon.textContent = '♟';
+      el.plazoStatus.textContent = 'Turno de ' + playerName(room.state.turn);
+      renderPlazoText();
+      el.extendBtn.disabled = true;
+      el.extendBtn.textContent = 'Solo lectura';
+    } else if (isYou && !over) {
       el.plazoCard.hidden = false;
       el.plazoIcon.textContent = '⏰';
       el.plazoStatus.textContent = 'Tu turno';
@@ -1056,9 +1071,14 @@
             Ver partida
           </button>
         `;
-        item.querySelector('.ver-partida').addEventListener('click', () =>
-          joinViaCode(p.roomCode, p.blancas === el.playerName.value ? p.blancas : p.negras)
-        );
+        item.querySelector('.ver-partida').addEventListener('click', () => {
+          const seleccionado = el.playerName.value;
+          if (p.blancas === seleccionado || p.negras === seleccionado) {
+            joinViaCode(p.roomCode, seleccionado);
+          } else {
+            window.location.href = '/corespon/' + p.roomCode + '?ver=1';
+          }
+        });
         el.partidasList.appendChild(item);
       }
     } catch (error) {
@@ -1138,6 +1158,33 @@
     el.codeInput.value = code.toUpperCase();
     el.joinName.value = name;
     el.joinForm.requestSubmit();
+  }
+
+  async function watchGame(code) {
+    isSpectator = true;
+    myColor = null;
+    orientation = 'white';
+    setBusy(true);
+    clearLobbyError();
+
+    try {
+      const response = await O.watch(code);
+      setBusy(false);
+      if (!response.ok) {
+        isSpectator = false;
+        showLobby();
+        el.codeInput.value = code;
+        showLobbyError(errorText(response.error));
+        return;
+      }
+      room = response.room;
+      enterGame();
+      showToast('Estás viendo la partida como espectador');
+    } catch (error) {
+      setBusy(false);
+      isSpectator = false;
+      showLobbyError('Error de conexión con el servidor.');
+    }
   }
 
   async function attemptResume() {
@@ -1525,7 +1572,10 @@
 
     const session = O.getSession();
     const urlCode = codeFromUrl();
-    if (session && session.code && (!urlCode || urlCode === session.code)) {
+    if (urlCode && watchFromUrl()) {
+      el.codeInput.value = urlCode;
+      watchGame(urlCode);
+    } else if (session && session.code && (!urlCode || urlCode === session.code)) {
       attemptResume();
     } else if (urlCode) {
       el.codeInput.value = urlCode;
