@@ -18,6 +18,10 @@ const crypto = require('crypto');
 const express = require('express');
 const { Server } = require('socket.io');
 const engine = require('../shared/engine');
+const { loadEnv } = require('./env');
+
+loadEnv();
+
 const { RoomManager, Room, normalizeCode, sameName, PLAZO_DEFAULT_MS, GRACIA_DEFAULT_MS, MAX_PRORROGAS, buildPgn } = require('./rooms');
 const { createStore } = require('./db');
 const {

@@ -5,6 +5,9 @@
  * Ejecutar con: node init-db.js
  */
 
+const { loadEnv } = require('./corespon/server/env');
+loadEnv();
+
 const { createStore } = require('./corespon/server/db');
 
 const JUGADORES = ['Manuel', 'Fernan', 'Alberto', 'Alvaro', 'Alejandro'];
