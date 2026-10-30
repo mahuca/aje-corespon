@@ -104,7 +104,9 @@
     plazoIcon: document.getElementById('plazoIcon'),
     plazoStatus: document.getElementById('plazoStatus'),
     plazoText: document.getElementById('plazoText'),
-    extendBtn: document.getElementById('extendBtn')
+    extendBtn: document.getElementById('extendBtn'),
+    drawBtn: document.getElementById('drawBtn'),
+    declineDrawBtn: document.getElementById('declineDrawBtn')
   };
 
   const squares = [];
@@ -120,6 +122,7 @@
   let busy = false;
   let toastTimer = null;
   let isSpectator = false;
+  let lastDrawOffer = null;
   let clockSkew = 0;
   let clockTimer = null;
 
@@ -270,6 +273,7 @@
     if (!orientation) orientation = myColor || 'white';
     document.body.classList.toggle('is-spectator', isSpectator);
     el.spectatorNote.hidden = !isSpectator;
+    lastDrawOffer = room.drawOffer || null;
     showGame();
     el.roomCode.textContent = room.code;
     el.waitingCode.textContent = room.code;
@@ -487,6 +491,27 @@
       renderPlazoText();
       el.extendBtn.disabled = true;
       el.extendBtn.textContent = 'Esperando jugada…';
+    }
+
+    // Tablas por acuerdo: proponer, aceptar o rechazar.
+    const rival = other(myColor);
+    const puedeProponer = !isSpectator && !over && !!myColor
+      && !!(room.players[rival]);
+    el.drawBtn.hidden = !puedeProponer;
+    el.declineDrawBtn.hidden = true;
+
+    if (puedeProponer) {
+      if (room.drawOffer === myColor) {
+        el.drawBtn.disabled = true;
+        el.drawBtn.textContent = 'Tablas propuestas…';
+      } else if (room.drawOffer === rival) {
+        el.drawBtn.disabled = false;
+        el.drawBtn.textContent = 'Aceptar tablas';
+        el.declineDrawBtn.hidden = false;
+      } else {
+        el.drawBtn.disabled = false;
+        el.drawBtn.textContent = 'Proponer tablas';
+      }
     }
   }
 
@@ -749,6 +774,12 @@
               text: 'Te has rendido.',
               status: 'Te has rendido.'
             };
+      case 'agreement':
+        return {
+          title: 'Tablas',
+          text: 'Habéis acordado tablas.',
+          status: 'Tablas por acuerdo mutuo.'
+        };
       case 'time':
         return win
           ? {
@@ -1334,7 +1365,9 @@
     clearSelection();
     showLobby();
     updateUrl(null);
-    showToast('Has salido de la sala');
+    showToast(inProgress
+      ? 'Te has rendido: la partida queda en tu contra.'
+      : 'Has salido de la sala');
   }
 
   // ==================== COPIAR ENLACE ====================
@@ -1371,6 +1404,11 @@
   O.on('room', (payload) => {
     if (!payload) return;
     const wasOver = !!(room && room.status.over);
+    if (!isSpectator && payload.drawOffer && payload.drawOffer !== myColor
+        && payload.drawOffer !== lastDrawOffer) {
+      showToast('Tu rival propone tablas');
+    }
+    lastDrawOffer = payload.drawOffer || null;
     room = payload;
 
     if (!myColor && !isSpectator) {
@@ -1505,6 +1543,29 @@
   el.copyBtn.addEventListener('click', copyInvite);
   el.waitingCopyBtn.addEventListener('click', copyInvite);
   el.extendBtn.addEventListener('click', requestExtension);
+
+  el.drawBtn.addEventListener('click', async () => {
+    if (!room || !myColor) return;
+    const esOfertaRival = !!room.drawOffer && room.drawOffer !== myColor;
+    const respuesta = esOfertaRival
+      ? await O.acceptDraw(room.code)
+      : await O.offerDraw(room.code);
+    if (!respuesta.ok) {
+      showToast(errorText(respuesta.error), 'error');
+      return;
+    }
+    showToast(esOfertaRival ? 'Tablas aceptadas' : 'Propuesta de tablas enviada');
+  });
+
+  el.declineDrawBtn.addEventListener('click', async () => {
+    if (!room) return;
+    const respuesta = await O.declineDraw(room.code);
+    if (!respuesta.ok) {
+      showToast(errorText(respuesta.error), 'error');
+      return;
+    }
+    showToast('Has rechazado las tablas');
+  });
 
   el.flipBtn.addEventListener('click', () => {
     orientation = orientation === 'white' ? 'black' : 'white';

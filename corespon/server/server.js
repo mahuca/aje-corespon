@@ -323,12 +323,30 @@ function createServer(options = {}) {
       if (!room) return respond({ ok: true });
 
       const color = socketContext(socket, room) ? socket.data.corespon.color : data.color;
-      if (room.players[color] && room.players[color].socketId === socket.id) {
-        room.players[color].connected = false;
-        room.players[color].socketId = null;
-        tokenMap.delete(room.players[color].token);
+      const asiento = room.players[color];
+      if (asiento && asiento.socketId === socket.id) {
+        // Salir de una partida en curso cuenta como abandono: el aviso del
+        // cliente lo dice y el rival no debe quedarse esperando para siempre.
+        const enCurso = !room.status.over
+          && room.players.white && room.players.black
+          && room.players.white.joinedAt && room.players.black.joinedAt;
+
+        if (enCurso) {
+          room.rendir(color);
+          await persistRoom(room);
+          io.to(room.code).emit('corespon:room:update', room.toPublic());
+
+          const host = baseUrl(socket);
+          gateway.enqueue(room.code, FIN, room.players.white, finMsg(room, host), host);
+          gateway.enqueue(room.code, FIN, room.players.black, finMsg(room, host), host);
+        } else {
+          await persistRoom(room);
+        }
+
+        asiento.connected = false;
+        asiento.socketId = null;
+        tokenMap.delete(asiento.token);
         socket.data.corespon = null;
-        await persistRoom(room);
       }
 
       if (bothConnected(room)) {
@@ -448,6 +466,63 @@ function createServer(options = {}) {
       gateway.enqueue(room.code, FIN, room.players.white, finMsg(room, host), host);
       gateway.enqueue(room.code, FIN, room.players.black, finMsg(room, host), host);
 
+      respond({ ok: true, room: room.toPublic() });
+    });
+
+    // Tablas por acuerdo: uno propone y el otro acepta o rechaza.
+    socket.on('corespon:draw', async (data, respond) => {
+      const room = rooms.getRoom(normalizeCode(data && data.code));
+      if (!room) return respond({ ok: false, error: 'not_found' });
+
+      const ctx = socketContext(socket, room);
+      if (!ctx || !ctx.player.connected) {
+        return respond({ ok: false, error: 'not_in_room' });
+      }
+
+      const result = room.ofrecerTablas(ctx.color);
+      if (!result.ok) return respond(result);
+
+      await persistRoom(room);
+      io.to(room.code).emit('corespon:room:update', room.toPublic());
+      respond({ ok: true, offer: result.offer, already: result.already });
+    });
+
+    socket.on('corespon:draw:accept', async (data, respond) => {
+      const room = rooms.getRoom(normalizeCode(data && data.code));
+      if (!room) return respond({ ok: false, error: 'not_found' });
+
+      const ctx = socketContext(socket, room);
+      if (!ctx || !ctx.player.connected) {
+        return respond({ ok: false, error: 'not_in_room' });
+      }
+
+      const result = room.aceptarTablas(ctx.color);
+      if (!result.ok) return respond(result);
+
+      await persistRoom(room);
+      io.to(room.code).emit('corespon:room:update', room.toPublic());
+
+      const host = baseUrl(socket);
+      gateway.enqueue(room.code, FIN, room.players.white, finMsg(room, host), host);
+      gateway.enqueue(room.code, FIN, room.players.black, finMsg(room, host), host);
+
+      respond({ ok: true, room: room.toPublic() });
+    });
+
+    socket.on('corespon:draw:decline', async (data, respond) => {
+      const room = rooms.getRoom(normalizeCode(data && data.code));
+      if (!room) return respond({ ok: false, error: 'not_found' });
+
+      const ctx = socketContext(socket, room);
+      if (!ctx || !ctx.player.connected) {
+        return respond({ ok: false, error: 'not_in_room' });
+      }
+
+      const result = room.rechazarTablas(ctx.color);
+      if (!result.ok) return respond(result);
+
+      await persistRoom(room);
+      io.to(room.code).emit('corespon:room:update', room.toPublic());
       respond({ ok: true, room: room.toPublic() });
     });
 
@@ -699,6 +774,7 @@ function createServer(options = {}) {
       prorrogas: room.plazos.prorrogas.length,
       terminoPor: room.status.reason === 'resignation' ? 'renuncia'
         : room.status.reason === 'time' ? 'tiempo'
+        : room.status.reason === 'agreement' ? 'acuerdo'
         : 'jugada',
       terminadoEn: new Date().toISOString(),
       parentRoom: room.parentCode || null

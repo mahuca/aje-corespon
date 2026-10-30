@@ -11,6 +11,8 @@ plazos de días, prórrogas, revancha, clasificación y avisos por Telegram.
 - Persistencia en **PostgreSQL** (Neon) o en memoria para desarrollo; las
   partidas abiertas se restauran al reiniciar.
 - **Revancha** en la misma sala con intercambio de colores.
+- **Tablas por acuerdo**: un jugador propone y el otro acepta o rechaza.
+- **Modo espectador** con `/corespon/CODE?ver=1`.
 - **Clasificación**: victoria 1, tablas 0,5, derrota 0; desempate por puntos,
   victorias y nombre.
 - **Notificaciones por Telegram**: invitación, turno, recordatorio, prórroga,
@@ -106,7 +108,11 @@ Define `DATABASE_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` y
 | `GET /api/whatsapp/queue` | Cola de notificaciones (`?estado=`, con `ADMIN_TOKEN`). |
 
 El juego en tiempo real usa **Socket.IO** (`corespon:join`, `corespon:move`,
-`corespon:resign`, `corespon:extend`, `corespon:rematch`).
+`corespon:resign`, `corespon:extend`, `corespon:draw`, `corespon:draw:accept`,
+`corespon:draw:decline`, `corespon:rematch`, `corespon:watch`).
+
+Salir de una partida en curso desde el botón **Salir** cuenta como rendición;
+cerrar la pestaña o perder la conexión permite reanudar al volver.
 
 ## Estructura
 

@@ -245,6 +245,21 @@
     return request('corespon:resign', { code, color });
   }
 
+  async function offerDraw(code) {
+    if (!session) return { ok: false, error: 'no_session' };
+    return request('corespon:draw', { code, color: session.color });
+  }
+
+  async function acceptDraw(code) {
+    if (!session) return { ok: false, error: 'no_session' };
+    return request('corespon:draw:accept', { code, color: session.color });
+  }
+
+  async function declineDraw(code) {
+    if (!session) return { ok: false, error: 'no_session' };
+    return request('corespon:draw:decline', { code, color: session.color });
+  }
+
   async function rematch(code) {
     if (!session) return { ok: false, error: 'no_session' };
     return request('corespon:rematch', { code });
@@ -329,6 +344,9 @@
     extendRoom,
     resign,
     rematch,
+    offerDraw,
+    acceptDraw,
+    declineDraw,
     watch,
     stopWatching,
     reconnect: () => {

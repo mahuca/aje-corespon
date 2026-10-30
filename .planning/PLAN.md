@@ -65,16 +65,19 @@ Verificación: `npm test` (47 pruebas).
       resolver `online-chess` (gitlink sin `.gitmodules`).
 - [x] D3. Cerrar la sesión del servidor en `SIGTERM` (usar `close()`).
 - [x] D4. Modo espectador: `O.watch()` nunca se llama; falta `/corespon/CODE?ver=1`.
-- [ ] D5. "Salir" avisa de abandono pero no lo aplica: decidir comportamiento.
+- [x] D5. "Salir" de una partida en curso es rendirse (decidido); cerrar la
+      pestaña o perder la conexión sigue permitiendo reanudar.
 - [ ] D6. Revocar el token de GitHub expuesto en `.git/config` y usar SSH.
 - [x] D7. README con variables, arranque local y despliegue.
 
 ## Fase E — Reglas de negocio pendientes
 
-- [ ] E1. "Solicitud de tiempo extra": hoy se concede automáticamente.
+- [x] E1. Prórrogas automáticas (decidido): +1 día, máximo 3, solo el
+      jugador del turno.
 - [x] E2. Elegir color al crear la partida y reutilizar la sala si ya existe
       una partida abierta entre los mismos jugadores en orden inverso.
-- [ ] E3. Tablas por acuerdo / repetición triple (opcional).
+- [x] E3. Tablas por acuerdo mutuo (proponer, aceptar o rechazar). La
+      repetición triple y la regla de 50 jugadas ya las detecta el motor.
 
 ## Reglas de negocio
 
@@ -88,7 +91,7 @@ Verificación: `npm test` (47 pruebas).
 ## Cómo ejecutar
 
 ```bash
-npm test                 # 66 pruebas
+npm test                 # 72 pruebas
 npm start                # http://localhost:3001/corespon
 npm run init-db          # alta de los 6 jugadores (Abuelo administrador)
 ```

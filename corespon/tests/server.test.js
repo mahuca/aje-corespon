@@ -567,3 +567,80 @@ test('invitación: no se puede crear una partida contra uno mismo', async (t) =>
   });
   assert.equal(response.status, 400);
 });
+
+test('salir: abandonar una partida en curso da la victoria al rival', async (t) => {
+  const store = createMemoryStore();
+  const { instance, port, base } = await boot(store);
+  t.after(() => cleanup(instance));
+
+  const { room } = await invite(base);
+  const white = await connect(port);
+  const black = await connect(port);
+  await request(white, 'corespon:join', { code: room.code, name: 'Manuel' });
+  await request(black, 'corespon:join', { code: room.code, name: 'Fernan' });
+
+  const update = nextEvent(black, 'corespon:room:update');
+  const leave = await request(white, 'corespon:leave', { code: room.code });
+  assert.equal(leave.ok, true);
+
+  const payload = await update;
+  assert.equal(payload.status.over, true);
+  assert.equal(payload.status.reason, 'resignation');
+  assert.equal(payload.status.winner, 'black');
+
+  const stats = await store.obtenerEstadisticas();
+  assert.equal(stats.partidasTotales, 1);
+});
+
+test('tablas: proponer, aceptar y guardar el resultado', async (t) => {
+  const store = createMemoryStore();
+  const { instance, port, base } = await boot(store);
+  t.after(() => cleanup(instance));
+
+  const { room } = await invite(base);
+  const white = await connect(port);
+  const black = await connect(port);
+  await request(white, 'corespon:join', { code: room.code, name: 'Manuel' });
+  await request(black, 'corespon:join', { code: room.code, name: 'Fernan' });
+
+  const updateOferta = nextEvent(black, 'corespon:room:update');
+  const oferta = await request(white, 'corespon:draw', { code: room.code });
+  assert.equal(oferta.ok, true);
+
+  const trasOferta = await updateOferta;
+  assert.equal(trasOferta.drawOffer, 'white');
+
+  const propia = await request(white, 'corespon:draw:accept', { code: room.code });
+  assert.equal(propia.ok, false);
+  assert.equal(propia.error, 'no_offer');
+
+  const update = nextEvent(white, 'corespon:room:update');
+  const acepta = await request(black, 'corespon:draw:accept', { code: room.code });
+  assert.equal(acepta.ok, true);
+
+  const payload = await update;
+  assert.equal(payload.status.over, true);
+  assert.equal(payload.status.reason, 'agreement');
+  assert.equal(payload.status.winner, null);
+  assert.equal(payload.drawOffer, null);
+
+  const stats = await store.obtenerEstadisticas();
+  assert.equal(stats.partidasTotales, 1);
+});
+
+test('tablas: rechazar mantiene la partida en curso', async (t) => {
+  const { instance, port, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const { room } = await invite(base);
+  const white = await connect(port);
+  const black = await connect(port);
+  await request(white, 'corespon:join', { code: room.code, name: 'Manuel' });
+  await request(black, 'corespon:join', { code: room.code, name: 'Fernan' });
+
+  await request(white, 'corespon:draw', { code: room.code });
+  const rechazo = await request(black, 'corespon:draw:decline', { code: room.code });
+  assert.equal(rechazo.ok, true);
+  assert.equal(rechazo.room.status.over, false);
+  assert.equal(rechazo.room.drawOffer, null);
+});

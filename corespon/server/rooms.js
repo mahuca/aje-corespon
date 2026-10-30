@@ -187,6 +187,8 @@ class Room {
     this.spectators = new Set();
     this.parentCode = null;
     this.rematchVotes = { white: false, black: false };
+    // Color que ha propuesto tablas y aún espera respuesta (null si no hay).
+    this.drawOffer = null;
     // Evita guardar dos veces el mismo resultado (persistRoom se llama en
     // varias rutas: jugada, rendición, tiempo, desconexión…).
     this.resultadoGuardado = false;
@@ -292,6 +294,7 @@ class Room {
     };
 
     this.history.push(result.move);
+    this.drawOffer = null;
     this.timing.moves.push(Date.now() - this.plazos.ultimaJugadaEn);
 
     if (!this.status.over) this.reiniciarPlazo();
@@ -310,6 +313,46 @@ class Room {
     const winner = loser === 'white' ? 'black' : 'white';
     this.status = { over: true, reason: 'time', winner, inCheck: this.status.inCheck };
     return this.status;
+  }
+
+  // ---------- tablas por acuerdo ----------
+
+  ofrecerTablas(color) {
+    if (this.status.over) return { ok: false, error: 'game_over' };
+    if (!this.players.white || !this.players.black) {
+      return { ok: false, error: 'waiting_player' };
+    }
+    if (!this.players[color]) return { ok: false, error: 'not_in_room' };
+
+    if (this.drawOffer === color) {
+      return { ok: true, already: true, offer: color };
+    }
+    this.drawOffer = color;
+    return { ok: true, already: false, offer: color };
+  }
+
+  aceptarTablas(color) {
+    if (this.status.over) return { ok: false, error: 'game_over' };
+    if (!this.drawOffer || this.drawOffer === color) {
+      return { ok: false, error: 'no_offer' };
+    }
+
+    this.drawOffer = null;
+    this.status = {
+      over: true,
+      reason: 'agreement',
+      winner: null,
+      inCheck: this.status.inCheck
+    };
+    return { ok: true, status: this.status };
+  }
+
+  rechazarTablas(color) {
+    if (!this.drawOffer || this.drawOffer === color) {
+      return { ok: false, error: 'no_offer' };
+    }
+    this.drawOffer = null;
+    return { ok: true };
   }
 
   /*
@@ -342,6 +385,7 @@ class Room {
     this.status = { over: false, reason: null, winner: null, inCheck: false };
     this.history = [];
     this.rematchVotes = { white: false, black: false };
+    this.drawOffer = null;
     this.resultadoGuardado = false;
     this.parentCode = this.parentCode || this.code;
     this.plazos = {
@@ -388,6 +432,7 @@ class Room {
       timing: { ...this.timing, moves: this.timing.moves.slice() },
       parentCode: this.parentCode,
       rematchVotes: { ...this.rematchVotes },
+      drawOffer: this.drawOffer,
       resultadoGuardado: this.resultadoGuardado
     };
   }
@@ -459,6 +504,8 @@ class Room {
 
     room.parentCode = typeof data.parentCode === 'string' ? data.parentCode : null;
     room.resultadoGuardado = !!data.resultadoGuardado;
+    room.drawOffer = data.drawOffer === 'white' || data.drawOffer === 'black'
+      ? data.drawOffer : null;
     room.rematchVotes = {
       white: !!(data.rematchVotes && data.rematchVotes.white),
       black: !!(data.rematchVotes && data.rematchVotes.black)
@@ -499,6 +546,7 @@ class Room {
         descripcion: plazo.descripcion,
         corto: plazo.corto
       },
+      drawOffer: this.drawOffer,
       prorrogas: this.plazos.prorrogas.length,
       maxProrrogas: MAX_PRORROGAS,
       canExtend: this.canExtend(now),

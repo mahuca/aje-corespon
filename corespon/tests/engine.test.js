@@ -385,3 +385,41 @@ test('env: parseLine entiende comentarios, comillas y líneas inválidas', () =>
   assert.deepEqual(parseLine('FOO="bar baz"'), { key: 'FOO', value: 'bar baz' });
   assert.deepEqual(parseLine("CLAVE='secreto'"), { key: 'CLAVE', value: 'secreto' });
 });
+
+// ---- tablas por acuerdo ----
+
+test('tablas: oferta, rechazo y aceptación', () => {
+  const room = new Room('ABC234', 'Manuel', 'Fernan');
+
+  assert.equal(room.ofrecerTablas('white').ok, true);
+  assert.equal(room.drawOffer, 'white');
+
+  // Quien propone no puede aceptar su propia oferta.
+  assert.equal(room.aceptarTablas('white').ok, false);
+  assert.equal(room.rechazarTablas('black').ok, true);
+  assert.equal(room.drawOffer, null);
+  assert.equal(room.status.over, false);
+
+  assert.equal(room.ofrecerTablas('white').ok, true);
+  assert.equal(room.aceptarTablas('black').ok, true);
+  assert.equal(room.status.over, true);
+  assert.equal(room.status.reason, 'agreement');
+  assert.equal(room.status.winner, null);
+});
+
+test('tablas: una jugada retira la oferta pendiente', () => {
+  const room = new Room('ABC234', 'Manuel', 'Fernan');
+  room.ofrecerTablas('white');
+
+  const result = room.aplicarJugada([6, 1], [4, 1]);
+  assert.equal(result.ok, true);
+  assert.equal(room.drawOffer, null);
+});
+
+test('tablas: la oferta se conserva al serializar la sala', () => {
+  const room = new Room('ABC234', 'Manuel', 'Fernan');
+  room.ofrecerTablas('black');
+
+  const copia = Room.fromSnapshot(room.code, room.snapshot());
+  assert.equal(copia.drawOffer, 'black');
+});
