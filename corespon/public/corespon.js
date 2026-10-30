@@ -19,7 +19,7 @@
     return;
   }
 
-  const PLAYERS = ['Manuel', 'Fernan', 'Alberto', 'Alvaro', 'Alejandro'];
+  const PLAYERS = ['Manuel', 'Fernan', 'Alberto', 'Alvaro', 'Alejandro', 'Abuelo'];
   const PROMOTION_ORDER = ['queen', 'rook', 'bishop', 'knight'];
   const PROMOTION_NAMES = {
     queen: 'Dama', rook: 'Torre', bishop: 'Alfil', knight: 'Caballo'

@@ -26,9 +26,12 @@ const SCHEMA = [
      id TEXT PRIMARY KEY,
      nombre TEXT NOT NULL UNIQUE,
      activa BOOLEAN NOT NULL DEFAULT TRUE,
+     admin BOOLEAN NOT NULL DEFAULT FALSE,
      whatsapp TEXT,
      creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
    )`,
+
+  `ALTER TABLE corespon_players ADD COLUMN IF NOT EXISTS admin BOOLEAN NOT NULL DEFAULT FALSE`,
 
   `CREATE TABLE IF NOT EXISTS corespon_partidas (
      room_code TEXT PRIMARY KEY,
@@ -105,6 +108,7 @@ function emptyPlayer(record) {
     id: record.id,
     nombre: record.nombre,
     activa: !!record.activa,
+    admin: !!record.admin,
     whatsapp: record.whatsapp || null,
     creadoEn: iso(record.creadoEn || record.creado_en)
   };
@@ -170,14 +174,19 @@ function createMemoryStore() {
       return Array.from(players.values()).map(emptyPlayer);
     },
 
-    async initRoster(names) {
+    async initRoster(names, adminNames = []) {
+      const admins = new Set(adminNames.map(nombre => nombre.toLowerCase()));
       for (const nombre of names) {
         const id = nombre.toLowerCase();
+        const esAdmin = admins.has(id);
         if (!players.has(id)) {
           players.set(id, emptyPlayer({
-            id, nombre, activa: true, whatsapp: null,
+            id, nombre, activa: true, admin: esAdmin, whatsapp: null,
             creadoEn: new Date().toISOString()
           }));
+        } else if (esAdmin && !players.get(id).admin) {
+          // Nunca se degrada a un administrador existente.
+          players.get(id).admin = true;
         }
       }
       return Array.from(players.values()).map(emptyPlayer);
@@ -312,7 +321,7 @@ function createPostgresStore(connectionString, options = {}) {
     async getPlayers() {
       await init();
       const { rows } = await pool.query(
-        `SELECT id, nombre, activa, whatsapp, creado_en FROM corespon_players ORDER BY nombre`
+        `SELECT id, nombre, activa, admin, whatsapp, creado_en FROM corespon_players ORDER BY nombre`
       );
       return rows.map(emptyPlayer);
     },
@@ -320,11 +329,12 @@ function createPostgresStore(connectionString, options = {}) {
     async savePlayer(player) {
       await init();
       const { rows } = await pool.query(
-        `INSERT INTO corespon_players (id, nombre, activa, whatsapp)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (id) DO UPDATE SET nombre = EXCLUDED.nombre, activa = EXCLUDED.activa, whatsapp = EXCLUDED.whatsapp
-         RETURNING id, nombre, activa, whatsapp, creado_en`,
-        [player.id, player.nombre, player.activa, player.whatsapp]
+        `INSERT INTO corespon_players (id, nombre, activa, admin, whatsapp)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (id) DO UPDATE SET nombre = EXCLUDED.nombre, activa = EXCLUDED.activa,
+           admin = (corespon_players.admin OR EXCLUDED.admin), whatsapp = EXCLUDED.whatsapp
+         RETURNING id, nombre, activa, admin, whatsapp, creado_en`,
+        [player.id, player.nombre, player.activa, !!player.admin, player.whatsapp || null]
       );
       return emptyPlayer(rows[0]);
     },
@@ -334,7 +344,7 @@ function createPostgresStore(connectionString, options = {}) {
       if (updates.whatsapp !== undefined) {
         const { rows } = await pool.query(
           `UPDATE corespon_players SET whatsapp = $2, nombre = COALESCE(nombre, $3)
-           WHERE id = $1 RETURNING id, nombre, activa, whatsapp, creado_en`,
+           WHERE id = $1 RETURNING id, nombre, activa, admin, whatsapp, creado_en`,
           [id, updates.whatsapp, updates.nombre]
         );
         return rows.length ? emptyPlayer(rows[0]) : null;
@@ -342,16 +352,18 @@ function createPostgresStore(connectionString, options = {}) {
       return null;
     },
 
-    async initRoster(names) {
+    async initRoster(names, adminNames = []) {
       await init();
+      const admins = new Set(adminNames.map(nombre => nombre.toLowerCase()));
       await pool.query('BEGIN');
       try {
         for (const nombre of names) {
+          const id = nombre.toLowerCase();
           await pool.query(
-            `INSERT INTO corespon_players (id, nombre, activa)
-             VALUES ($1, $2, TRUE)
-             ON CONFLICT (id) DO NOTHING`,
-            [nombre.toLowerCase(), nombre]
+            `INSERT INTO corespon_players (id, nombre, activa, admin)
+             VALUES ($1, $2, TRUE, $3)
+             ON CONFLICT (id) DO UPDATE SET admin = (corespon_players.admin OR EXCLUDED.admin)`,
+            [id, nombre, admins.has(id)]
           );
         }
         await pool.query('COMMIT');

@@ -88,8 +88,9 @@ function createServer(options = {}) {
   const timers = [];
 
   // Registrar los jugadores invitados por defecto
-  const JUGADORES_POR_DEFECTO = ['Manuel', 'Fernan', 'Alberto', 'Alvaro', 'Alejandro'];
-  store.initRoster(JUGADORES_POR_DEFECTO).catch((error) => {
+  const JUGADORES_POR_DEFECTO = ['Manuel', 'Fernan', 'Alberto', 'Alvaro', 'Alejandro', 'Abuelo'];
+  const ADMINISTRADORES = ['Abuelo'];
+  store.initRoster(JUGADORES_POR_DEFECTO, ADMINISTRADORES).catch((error) => {
     if (!quiet) console.error('[corespon] Error registrando jugadores:', error.message);
   });
 
@@ -122,7 +123,7 @@ function createServer(options = {}) {
     try {
       const players = await store.getPlayers();
       res.json({ ok: true, players: players.filter(p => p.activa).map(p => ({
-        id: p.id, nombre: p.nombre, whatsapp: p.whatsapp
+        id: p.id, nombre: p.nombre, whatsapp: p.whatsapp, admin: !!p.admin
       })) });
     } catch (error) {
       res.status(500).json({ ok: false, error: error.message });
