@@ -25,7 +25,7 @@ loadEnv();
 const { RoomManager, Room, normalizeCode, sameName, PLAZO_DEFAULT_MS, GRACIA_DEFAULT_MS, MAX_PRORROGAS, buildPgn } = require('./rooms');
 const { createStore } = require('./db');
 const {
-  getGateway, INVITACION, TURNO, RECORDATORIO, PRORROGA, TIEMPO, FIN,
+  WhatsAppGateway, INVITACION, TURNO, RECORDATORIO, PRORROGA, TIEMPO, FIN,
   invitacionMsg, turnoMsg, recordatorioMsg, prorrogaMsg, tiempoMsg, finMsg
 } = require('./whatsapp');
 
@@ -84,7 +84,7 @@ function createServer(options = {}) {
 
   const rooms = new RoomManager();
   const store = options.store || createStore({ quiet });
-  const gateway = getGateway({ store, debug: !quiet });
+  const gateway = new WhatsAppGateway({ store, debug: !quiet });
   const timers = [];
 
   // Registrar los jugadores invitados por defecto
@@ -286,7 +286,7 @@ function createServer(options = {}) {
       respond({ ok: true, room: room.toPublic(), color, token: player.token, resumed: isReconnect });
     });
 
-    socket.on('corespon:leave', (data, respond) => {
+    socket.on('corespon:leave', async (data, respond) => {
       const room = rooms.getRoom(normalizeCode(data.code));
       if (!room) return respond({ ok: true });
 
@@ -296,7 +296,7 @@ function createServer(options = {}) {
         room.players[color].socketId = null;
         tokenMap.delete(room.players[color].token);
         socket.data.corespon = null;
-        persistRoom(room);
+        await persistRoom(room);
       }
 
       if (bothConnected(room)) {
@@ -324,7 +324,7 @@ function createServer(options = {}) {
     });
 
     // Movimiento
-    socket.on('corespon:move', (data, respond) => {
+    socket.on('corespon:move', async (data, respond) => {
       const room = rooms.getRoom(normalizeCode(data.code));
       if (!room) return respond({ ok: false, error: 'not_found' });
 
@@ -342,7 +342,7 @@ function createServer(options = {}) {
         return respond(result);
       }
 
-      persistRoom(room);
+      await persistRoom(room);
 
       io.to(room.code).emit('corespon:room:update', room.toPublic());
 
@@ -360,7 +360,7 @@ function createServer(options = {}) {
     });
 
     // Prórroga
-    socket.on('corespon:extend', (data, respond) => {
+    socket.on('corespon:extend', async (data, respond) => {
       const room = rooms.getRoom(normalizeCode(data.code));
       if (!room) return respond({ ok: false, error: 'not_found' });
 
@@ -374,7 +374,7 @@ function createServer(options = {}) {
 
       const result = room.extenderPlazo(ctx.color);
       if (result.ok) {
-        persistRoom(room);
+        await persistRoom(room);
         io.to(room.code).emit('corespon:room:update', room.toPublic());
         const host = baseUrl(socket);
         gateway.enqueue(room.code, PRORROGA, room.players[room.turnColor()].whatsapp, null, prorrogaMsg(room, host), host);
@@ -385,7 +385,7 @@ function createServer(options = {}) {
     });
 
     // Rendición
-    socket.on('corespon:resign', (data, respond) => {
+    socket.on('corespon:resign', async (data, respond) => {
       const room = rooms.getRoom(normalizeCode(data.code));
       if (!room) return respond({ ok: false, error: 'not_found' });
 
@@ -398,7 +398,7 @@ function createServer(options = {}) {
       }
 
       room.rendir(ctx.color);
-      persistRoom(room);
+      await persistRoom(room);
       io.to(room.code).emit('corespon:room:update', room.toPublic());
 
       const host = baseUrl(socket);
