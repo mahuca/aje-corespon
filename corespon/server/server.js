@@ -50,8 +50,9 @@ function createServer(options = {}) {
   });
 
   const rooms = new RoomManager();
-  const store = createStore({ quiet });
+  const store = options.store || createStore({ quiet });
   const gateway = getGateway({ store, debug: !quiet });
+  const timers = [];
 
   // Registrar los jugadores invitados por defecto
   const JUGADORES_POR_DEFECTO = ['Manuel', 'Fernan', 'Alberto', 'Alvaro', 'Alejandro'];
@@ -396,7 +397,7 @@ function createServer(options = {}) {
   // ============================ TASKS ASÍNCRONOS ============================
 
   // 1. Revisar plazos caducados → derrota por tiempo
-  setInterval(async () => {
+  timers.push(setInterval(async () => {
     const now = Date.now();
     const perdidas = rooms.checkDeadlines(now);
     for (const room of perdidas) {
@@ -409,28 +410,28 @@ function createServer(options = {}) {
       gateway.enqueue(room.code, TIEMPO, room.players[loser].whatsapp, null, tiempoMsg(room, loser, host), host);
       gateway.enqueue(room.code, FIN, room.players[winner].whatsapp, null, finMsg(room, host), host);
     }
-  }, CHECK_DEADLINE_MS);
+  }, CHECK_DEADLINE_MS));
 
   // 2. Recordatorios
-  setInterval(async () => {
+  timers.push(setInterval(async () => {
     const salas = rooms.needReminder();
     for (const room of salas) {
       const host = 'http://localhost:3001';
       gateway.enqueue(room.code, RECORDATORIO, room.players[room.turnColor()].whatsapp, null, recordatorioMsg(room, host), host);
     }
-  }, CHECK_RECORDATORIO_MS);
+  }, CHECK_RECORDATORIO_MS));
 
   // 3. Limpieza
-  setInterval(() => {
+  timers.push(setInterval(() => {
     const removed = rooms.cleanup();
     for (const code of removed) log('Sala eliminada (vacía):', code);
-  }, CLEANUP_INTERVAL_MS);
+  }, CLEANUP_INTERVAL_MS));
 
   // 4. Procesa colas de WhatsApp
-  setInterval(async () => {
+  timers.push(setInterval(async () => {
     const res = await gateway.processQueue(50);
     if (res.processed) log('Notificaciones WhatsApp enviadas:', res.processed);
-  }, 60 * 1000);
+  }, 60 * 1000));
 
   // ============================ RUTAS + SERVIDOR ============================
 
@@ -533,16 +534,52 @@ function createServer(options = {}) {
     });
   }
 
-  server.listen(3001, () => {
-    log('Servidor de correspondencia en puerto 3001');
-    log('Abre http://localhost:3001/corespon');
-  });
+  /*
+   * Arranca el servidor HTTP. No se llama automáticamente: los tests usan
+   * `server.listen(0)` sobre la instancia devuelta.
+   */
+  function start(port) {
+    const chosen = Number(port) || Number(options.port) || Number(process.env.PORT) || 3001;
+    return new Promise((resolve, reject) => {
+      const onError = (error) => {
+        server.off('listening', onListening);
+        reject(error);
+      };
+      const onListening = () => {
+        server.off('error', onError);
+        const actual = server.address() && typeof server.address() === 'object'
+          ? server.address().port
+          : chosen;
+        log('Servidor de correspondencia en puerto ' + actual);
+        log('Abre http://localhost:' + actual + '/corespon');
+        resolve(actual);
+      };
+      server.once('error', onError);
+      server.once('listening', onListening);
+      server.listen(chosen);
+    });
+  }
 
-  return { app, server, io, rooms, store, gateway };
+  /*
+   * Libera temporizadores, conexiones y el pool de base de datos.
+   * Imprescindible para que los tests de integración terminen.
+   */
+  async function close() {
+    for (const timer of timers) clearInterval(timer);
+    timers.length = 0;
+    await new Promise((resolve) => io.close(() => resolve()));
+    await store.close().catch(() => {});
+  }
+
+  return { app, server, io, rooms, store, gateway, start, close };
 }
 
 module.exports = { createServer, Room };
 
 if (require.main === module) {
-  createServer({ quiet: false });
+  const instance = createServer({ quiet: false });
+  instance.start().catch((error) => {
+    console.error('[corespon] No se pudo arrancar el servidor:', error.message);
+    process.exit(1);
+  });
 }
