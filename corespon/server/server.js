@@ -29,17 +29,46 @@ const CLEANUP_INTERVAL_MS = 60 * 1000;
 const CHECK_DEADLINE_MS = 60 * 1000;
 const CHECK_RECORDATORIO_MS = 30 * 60 * 1000;
 
-function getHost(req) {
-  const proto = req.protocol || 'http';
-  const host = req.get('host') || 'localhost:3001';
-  return `${proto}://${host}`;
+function trimSlash(value) {
+  return String(value || '').replace(/\/+$/, '');
 }
 
 function createServer(options = {}) {
   const quiet = !!options.quiet;
+  let currentPort = Number(options.port) || Number(process.env.PORT) || 3001;
   const log = (...args) => {
     if (!quiet) console.log('[corespon]', ...args);
   };
+
+  /*
+   * URL pública de la aplicación.
+   *
+   * - `BASE_URL` (recomendado en producción) tiene prioridad.
+   * - Con una petición HTTP de Express se usa `protocol` + `Host`.
+   * - Con un socket se leen las cabeceras del handshake, porque
+   *   `socket.request` es un IncomingMessage crudo sin los ayudantes de Express.
+   * - Sin contexto (temporizadores) se usa el último puerto de escucha.
+   */
+  function baseUrl(reqOrSocket) {
+    if (process.env.BASE_URL) return trimSlash(process.env.BASE_URL);
+
+    if (reqOrSocket && typeof reqOrSocket.get === 'function'
+        && typeof reqOrSocket.protocol === 'string') {
+      const host = reqOrSocket.get('host');
+      if (host) return trimSlash(reqOrSocket.protocol + '://' + host);
+    }
+
+    const handshake = reqOrSocket && reqOrSocket.handshake;
+    if (handshake) {
+      const headers = handshake.headers || {};
+      const proto = String(headers['x-forwarded-proto'] || '').split(',')[0].trim()
+        || (handshake.secure ? 'https' : 'http');
+      const host = String(headers['x-forwarded-host'] || headers.host || '').split(',')[0].trim();
+      if (host) return trimSlash(proto + '://' + host);
+    }
+
+    return trimSlash(options.baseUrl || 'http://localhost:' + currentPort);
+  }
 
   const app = express();
   const server = http.createServer(app);
@@ -189,7 +218,7 @@ function createServer(options = {}) {
       });
 
       // Notificar por WhatsApp si los números están registrados
-      const host = getHost(req);
+      const host = baseUrl(req);
       const whiteHasWpp = blancoObj && blancoObj.whatsapp;
       const blackHasWpp = negroObj && negroObj.whatsapp;
 
@@ -245,7 +274,7 @@ function createServer(options = {}) {
       // Notificar al otro jugador por WhatsApp
       const otherColor = color === 'white' ? 'black' : 'white';
       const otherPlayer = room.players[otherColor];
-      const host = getHost(socket.request);
+      const host = baseUrl(socket);
       gateway.enqueue(room.code, TURNO, otherPlayer.whatsapp, null, turnoMsg(room, otherColor, host), host);
 
       if (bothConnected(room)) room.timing.runningSince = now;
@@ -312,11 +341,11 @@ function createServer(options = {}) {
       io.to(room.code).emit('corespon:room:update', room.toPublic());
 
       if (!room.status.over) {
-        const host = getHost(socket.request);
+        const host = baseUrl(socket);
         const otherColor = room.turnColor() === 'white' ? 'black' : 'white';
         gateway.enqueue(room.code, TURNO, room.players[otherColor].whatsapp, null, turnoMsg(room, otherColor, host), host);
       } else {
-        const host = getHost(socket.request);
+        const host = baseUrl(socket);
         gateway.enqueue(room.code, FIN, room.players.white.whatsapp, null, finMsg(room, host), host);
         gateway.enqueue(room.code, FIN, room.players.black.whatsapp, null, finMsg(room, host), host);
       }
@@ -339,7 +368,7 @@ function createServer(options = {}) {
       if (result.ok) {
         persistRoom(room);
         io.to(room.code).emit('corespon:room:update', room.toPublic());
-        const host = getHost(socket.request);
+        const host = baseUrl(socket);
         gateway.enqueue(room.code, PRORROGA, room.players[room.turnColor()].whatsapp, null, prorrogaMsg(room, host), host);
         respond(result);
       } else {
@@ -362,7 +391,7 @@ function createServer(options = {}) {
       persistRoom(room);
       io.to(room.code).emit('corespon:room:update', room.toPublic());
 
-      const host = getHost(socket.request);
+      const host = baseUrl(socket);
       gateway.enqueue(room.code, FIN, room.players.white.whatsapp, null, finMsg(room, host), host);
       gateway.enqueue(room.code, FIN, room.players.black.whatsapp, null, finMsg(room, host), host);
 
@@ -406,7 +435,7 @@ function createServer(options = {}) {
 
       const loser = room.turnColor();
       const winner = loser === 'white' ? 'black' : 'white';
-      const host = 'http://localhost:3001';
+      const host = baseUrl();
       gateway.enqueue(room.code, TIEMPO, room.players[loser].whatsapp, null, tiempoMsg(room, loser, host), host);
       gateway.enqueue(room.code, FIN, room.players[winner].whatsapp, null, finMsg(room, host), host);
     }
@@ -416,7 +445,7 @@ function createServer(options = {}) {
   timers.push(setInterval(async () => {
     const salas = rooms.needReminder();
     for (const room of salas) {
-      const host = 'http://localhost:3001';
+      const host = baseUrl();
       gateway.enqueue(room.code, RECORDATORIO, room.players[room.turnColor()].whatsapp, null, recordatorioMsg(room, host), host);
     }
   }, CHECK_RECORDATORIO_MS));
@@ -550,6 +579,7 @@ function createServer(options = {}) {
         const actual = server.address() && typeof server.address() === 'object'
           ? server.address().port
           : chosen;
+        currentPort = actual;
         log('Servidor de correspondencia en puerto ' + actual);
         log('Abre http://localhost:' + actual + '/corespon');
         resolve(actual);

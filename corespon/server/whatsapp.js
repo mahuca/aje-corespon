@@ -27,18 +27,18 @@ const MESSAGES = {
   invitacion:
     '♟ *Nueva partida de ajedrez*\n\n${rival} te ha invitado a una partida de ' +
     'correspondencia. Tienes 2 días por jugada (ampliables). ' +
-    'Entra en https://${host}/corespon y usa el código *${code}* ' +
+    'Entra en ${host}/corespon y usa el código *${code}* ' +
     '(o copia el enlace).',
 
   turno:
     '♟ *Te toca mover*\n\nEs tu turno en la partida ${code}. ' +
     'Tu jugada caduca en *${tiempo}*.\n\nEntra a jugar: ' +
-    'https://${host}/corespon/${code}',
+    '${host}/corespon/${code}',
 
   recordatorio:
     '⏰ *Recordatorio de ajedrez*\n\nTe queda poco tiempo para mover en ' +
     'la partida ${code}: *${tiempo}*.\n\nEntra a jugar: ' +
-    'https://${host}/corespon/${code}',
+    '${host}/corespon/${code}',
 
   prorroga:
     '♟ *Ampliación concedida*\n\nTu prórroga en la partida ${code} ha sido ' +
