@@ -268,6 +268,15 @@ function createServer(options = {}) {
       player.token = player.token || crypto.randomUUID();
       player.connected = true;
       player.joinedAt = player.joinedAt || Date.now();
+      // El socket que ocupa el asiento ahora mismo. Un socket anterior deja
+      // de poder mover/rendirse porque socketContext() valida este id.
+      player.socketId = socket.id;
+      socket.data.corespon = { code: room.code, color };
+      if (socket.data.spectator) {
+        const watched = rooms.getRoom(socket.data.spectator);
+        if (watched) watched.spectators.delete(socket.id);
+        socket.data.spectator = null;
+      }
 
       tokenMap.set(player.token, room.code);
 
@@ -282,17 +291,19 @@ function createServer(options = {}) {
       await persistRoom(room);
 
       socket.join(room.code);
-      respond({ ok: true, room: room.toPublic(), color, resumed: isReconnect });
+      respond({ ok: true, room: room.toPublic(), color, token: player.token, resumed: isReconnect });
     });
 
     socket.on('corespon:leave', (data, respond) => {
       const room = rooms.getRoom(normalizeCode(data.code));
       if (!room) return respond({ ok: true });
 
-      const color = data.color;
-      if (room.players[color]) {
+      const color = socketContext(socket, room) ? socket.data.corespon.color : data.color;
+      if (room.players[color] && room.players[color].socketId === socket.id) {
         room.players[color].connected = false;
+        room.players[color].socketId = null;
         tokenMap.delete(room.players[color].token);
+        socket.data.corespon = null;
         persistRoom(room);
       }
 
@@ -307,15 +318,16 @@ function createServer(options = {}) {
       const room = rooms.getRoom(normalizeCode(data.code));
       if (!room) return respond({ ok: false, error: 'not_found' });
 
-      socket.id.roomCode = room.code;
+      socket.data.spectator = room.code;
       room.spectators.add(socket.id);
+      socket.join(room.code);
       respond({ ok: true, room: room.toPublic() });
     });
 
     socket.on('corespon:unwatch', (data, respond) => {
       const room = rooms.getRoom(normalizeCode(data.code));
-      if (!room) return respond({ ok: true });
-      room.spectators.delete(socket.id);
+      if (room) room.spectators.delete(socket.id);
+      if (socket.data) socket.data.spectator = null;
       respond({ ok: true });
     });
 
@@ -324,10 +336,12 @@ function createServer(options = {}) {
       const room = rooms.getRoom(normalizeCode(data.code));
       if (!room) return respond({ ok: false, error: 'not_found' });
 
-      const color = data.color;
-      const player = room.players[color];
-      if (!player || !player.connected) {
+      const ctx = socketContext(socket, room);
+      if (!ctx || !ctx.player.connected) {
         return respond({ ok: false, error: 'not_in_room' });
+      }
+      if (ctx.color !== room.turnColor()) {
+        return respond({ ok: false, error: 'not_your_turn' });
       }
 
       const result = room.aplicarJugada(data.from, data.to, data.promotion);
@@ -358,13 +372,15 @@ function createServer(options = {}) {
       const room = rooms.getRoom(normalizeCode(data.code));
       if (!room) return respond({ ok: false, error: 'not_found' });
 
-      const color = data.color;
-      const player = room.players[color];
-      if (!player || !player.connected) {
+      const ctx = socketContext(socket, room);
+      if (!ctx || !ctx.player.connected) {
         return respond({ ok: false, error: 'not_in_room' });
       }
+      if (ctx.color !== room.turnColor()) {
+        return respond({ ok: false, error: 'not_your_turn' });
+      }
 
-      const result = room.extenderPlazo(color);
+      const result = room.extenderPlazo(ctx.color);
       if (result.ok) {
         persistRoom(room);
         io.to(room.code).emit('corespon:room:update', room.toPublic());
@@ -381,13 +397,15 @@ function createServer(options = {}) {
       const room = rooms.getRoom(normalizeCode(data.code));
       if (!room) return respond({ ok: false, error: 'not_found' });
 
-      const color = data.color;
-      const player = room.players[color];
-      if (!player || !player.connected) {
+      const ctx = socketContext(socket, room);
+      if (!ctx || !ctx.player.connected) {
         return respond({ ok: false, error: 'not_in_room' });
       }
+      if (room.status.over) {
+        return respond({ ok: false, error: 'game_over' });
+      }
 
-      room.rendir(color);
+      room.rendir(ctx.color);
       persistRoom(room);
       io.to(room.code).emit('corespon:room:update', room.toPublic());
 
@@ -410,14 +428,23 @@ function createServer(options = {}) {
     });
 
     socket.on('disconnect', () => {
-      const code = socket.id.roomCode;
-      if (code) {
-        const room = rooms.getRoom(code);
+      if (socket.data && socket.data.spectator) {
+        const watching = rooms.getRoom(socket.data.spectator);
+        if (watching) watching.spectators.delete(socket.id);
+        socket.data.spectator = null;
+      }
+
+      const ctx = socket.data && socket.data.corespon;
+      if (ctx && ctx.code) {
+        const room = rooms.getRoom(ctx.code);
         if (room) {
-          const color = room.colorForToken(socket.handshake.auth?.token);
-          if (color) room.players[color].connected = false;
-          if (bothConnected(room)) room.timing.runningSince = null;
-          persistRoom(room);
+          const player = room.players[ctx.color];
+          if (player && player.socketId === socket.id) {
+            player.connected = false;
+            player.socketId = null;
+            if (bothConnected(room)) room.timing.runningSince = null;
+            persistRoom(room);
+          }
         }
       }
     });
@@ -492,6 +519,25 @@ function createServer(options = {}) {
   function bothConnected(room) {
     return !!(room.players.white && room.players.black
       && room.players.white.connected && room.players.black.connected);
+  }
+
+  /*
+   * Contexto de juego del socket.
+   *
+   * Devuelve null si el socket no ocupa un asiento en esa sala: espectadores,
+   * salas inexistentes o asientos reemplazados por otro socket. El color
+   * siempre sale de aquí, nunca del payload del cliente.
+   */
+  function socketContext(socket, expectedRoom) {
+    const ctx = socket.data && socket.data.corespon;
+    if (!ctx || !ctx.code) return null;
+    const room = rooms.getRoom(ctx.code);
+    if (!room) return null;
+    if (expectedRoom && room !== expectedRoom) return null;
+    const player = room.players[ctx.color];
+    if (!player) return null;
+    if (player.socketId && player.socketId !== socket.id) return null;
+    return { room, color: ctx.color, player };
   }
 
   function estadoAFen(state) {
