@@ -67,7 +67,9 @@ Verificación: `npm test` (47 pruebas).
 - [x] D4. Modo espectador: `O.watch()` nunca se llama; falta `/corespon/CODE?ver=1`.
 - [x] D5. "Salir" de una partida en curso es rendirse (decidido); cerrar la
       pestaña o perder la conexión sigue permitiendo reanudar.
-- [ ] D6. Revocar el token de GitHub expuesto en `.git/config` y usar SSH.
+- [ ] D6. Revocar el token de GitHub que estaba en `.git/config`.
+      Hecho: el remoto ya usa SSH (`git@github.com:mahuca/aje-corespon.git`).
+      Pendiente: revocar el token en GitHub (sigue siendo válido).
 - [x] D7. README con variables, arranque local y despliegue.
 
 ## Fase E — Reglas de negocio pendientes
