@@ -136,6 +136,7 @@ después de guardarla.
 | `GET /api/partidas` | Partidas abiertas. |
 | `GET /api/partidas/:code` | Estado de una partida. |
 | `POST /api/partidas/invitar` | Crea una invitación. |
+| `DELETE /api/partidas/:code` | Borra una partida (solo con `ADMIN_TOKEN`). |
 | `GET /api/classification` | Clasificación. |
 | `GET /healthz` | Liveness (no toca la base de datos). |
 | `GET /api/status` | Estadísticas y salud (consulta Postgres). |

@@ -580,6 +580,15 @@ class RoomManager {
     return [...this.rooms.values()];
   }
 
+  // Borrado administrativo: saca la sala de memoria y la devuelve.
+  removeRoom(code) {
+    const normalized = normalizeCode(code);
+    if (!normalized) return null;
+    const room = this.rooms.get(normalized) || null;
+    this.rooms.delete(normalized);
+    return room;
+  }
+
   openRooms() {
     return this.all().filter(room => !room.status.over);
   }

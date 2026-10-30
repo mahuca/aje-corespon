@@ -1438,6 +1438,20 @@
     if (!el.gameScreen.hidden) render();
   });
 
+  // La partida se canceló desde administración.
+  O.on('closed', () => {
+    room = null;
+    myColor = null;
+    pendingPromotion = null;
+    rematchPending = false;
+    movePending = false;
+    clearSelection();
+    O.clearSession();
+    showLobby();
+    updateUrl(null);
+    showToast('La partida se ha cancelado.');
+  });
+
   // Revancha: el servidor intercambió los colores y nos dice cuál tenemos.
   O.on('color', (payload) => {
     if (!payload || !payload.color) return;

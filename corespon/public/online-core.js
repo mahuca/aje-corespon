@@ -175,6 +175,13 @@
     emitLocal('room', room);
   });
 
+  // La sala se ha borrado desde administración.
+  socket.on('corespon:room:closed', (payload) => {
+    if (!room || !payload || payload.code !== room.code) return;
+    room = null;
+    emitLocal('closed', payload);
+  });
+
   socket.on('corespon:extendResult', (payload) => {
     if (!payload) return;
     room = payload.room;

@@ -163,6 +163,32 @@ function createServer(options = {}) {
     }
   });
 
+  /*
+   * Borrado administrativo de una partida (pruebas, salas atascadas…).
+   * No genera resultado ni afecta a la clasificación.
+   */
+  app.delete('/api/partidas/:code', async (req, res) => {
+    try {
+      const adminToken = process.env.ADMIN_TOKEN;
+      if (!adminToken || req.get('x-admin-token') !== adminToken) {
+        return res.status(401).json({ ok: false, error: 'No autorizado' });
+      }
+
+      const code = normalizeCode(req.params.code);
+      if (!code) {
+        return res.status(400).json({ ok: false, error: 'Código inválido' });
+      }
+
+      const room = rooms.removeRoom(code);
+      await store.deletePartida(code);
+      if (room) io.to(code).emit('corespon:room:closed', { code });
+
+      res.json({ ok: true, code, estabaEnMemoria: !!room });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
   // Crear una invitación de partida
   app.post('/api/partidas/invitar', async (req, res) => {
     try {

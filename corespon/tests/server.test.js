@@ -658,3 +658,37 @@ test('api: /healthz responde sin tocar la base de datos', async (t) => {
   assert.equal(data.storage, 'memory');
   assert.ok(data.uptime >= 0);
 });
+
+test('admin: borrar una partida exige token y la elimina', async (t) => {
+  const previo = process.env.ADMIN_TOKEN;
+  process.env.ADMIN_TOKEN = 'clave-admin';
+  t.after(() => {
+    if (previo === undefined) delete process.env.ADMIN_TOKEN;
+    else process.env.ADMIN_TOKEN = previo;
+  });
+
+  const { instance, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const { room } = await invite(base);
+  assert.notEqual(instance.rooms.getRoom(room.code), null);
+
+  const sinToken = await fetch(`${base}/api/partidas/${room.code}`, { method: 'DELETE' });
+  assert.equal(sinToken.status, 401);
+
+  const borrada = await fetch(`${base}/api/partidas/${room.code}`, {
+    method: 'DELETE',
+    headers: { 'x-admin-token': 'clave-admin' }
+  });
+  assert.equal(borrada.status, 200);
+
+  const data = await borrada.json();
+  assert.equal(data.ok, true);
+  assert.equal(data.estabaEnMemoria, true);
+
+  assert.equal(instance.rooms.getRoom(room.code), null);
+  assert.equal((await fetch(`${base}/api/partidas/${room.code}`)).status, 404);
+
+  const lista = await fetch(`${base}/api/partidas`).then(r => r.json());
+  assert.equal(lista.partidas.length, 0);
+});
