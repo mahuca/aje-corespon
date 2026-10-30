@@ -186,6 +186,10 @@ class Room {
     this.history = [];
     this.spectators = new Set();
     this.parentCode = null;
+    this.rematchVotes = { white: false, black: false };
+    // Evita guardar dos veces el mismo resultado (persistRoom se llama en
+    // varias rutas: jugada, rendición, tiempo, desconexión…).
+    this.resultadoGuardado = false;
 
     // Plazos
     this.plazos = {
@@ -308,6 +312,54 @@ class Room {
     return this.status;
   }
 
+  /*
+   * Voto de revancha. Cuando ambos jugadores han votado, la misma sala
+   * arranca una partida nueva con los colores intercambiados.
+   *
+   * Los objetos de jugador (token, socket) viajan con la persona, así que
+   * tras el intercambio el socket que era blancas pasa a ser negras.
+   */
+  voteRematch(color) {
+    if (!this.status.over) return { ok: false, error: 'not_finished' };
+    if (!this.players.white || !this.players.black) {
+      return { ok: false, error: 'waiting_player' };
+    }
+
+    this.rematchVotes[color] = true;
+    if (!this.rematchVotes.white || !this.rematchVotes.black) {
+      return { ok: true, started: false, votes: { ...this.rematchVotes } };
+    }
+
+    const white = this.players.white;
+    const black = this.players.black;
+    this.players.white = black;
+    this.players.black = white;
+    this.players.white.color = 'white';
+    this.players.black.color = 'black';
+
+    const now = Date.now();
+    this.state = engine.newState();
+    this.status = { over: false, reason: null, winner: null, inCheck: false };
+    this.history = [];
+    this.rematchVotes = { white: false, black: false };
+    this.resultadoGuardado = false;
+    this.parentCode = this.parentCode || this.code;
+    this.plazos = {
+      plazoMs: PLAZO_DEFAULT_MS,
+      graciaMs: GRACIA_DEFAULT_MS,
+      plazoHasta: now + PLAZO_DEFAULT_MS,
+      graciaHasta: now + PLAZO_DEFAULT_MS + GRACIA_DEFAULT_MS,
+      prorrogas: [],
+      creadoEn: now,
+      ultimaJugadaEn: now,
+      recordado: false,
+      avisadoCaducidad: false
+    };
+    this.timing = { white: 0, black: 0, moves: [], partial: 0, runningSince: now };
+
+    return { ok: true, started: true };
+  }
+
   // ---------- persistencia ----------
 
   /*
@@ -334,7 +386,9 @@ class Room {
       },
       plazos: { ...this.plazos, prorrogas: this.plazos.prorrogas.slice() },
       timing: { ...this.timing, moves: this.timing.moves.slice() },
-      parentCode: this.parentCode
+      parentCode: this.parentCode,
+      rematchVotes: { ...this.rematchVotes },
+      resultadoGuardado: this.resultadoGuardado
     };
   }
 
@@ -397,12 +451,18 @@ class Room {
         white: Number.isFinite(saved.white) ? saved.white : 0,
         black: Number.isFinite(saved.black) ? saved.black : 0,
         moves: Array.isArray(saved.moves) ? saved.moves : [],
+        partial: Number.isFinite(saved.partial) ? saved.partial : 0,
         // Al restaurar nadie está conectado: el reloj no corre.
         runningSince: null
       };
     }
 
     room.parentCode = typeof data.parentCode === 'string' ? data.parentCode : null;
+    room.resultadoGuardado = !!data.resultadoGuardado;
+    room.rematchVotes = {
+      white: !!(data.rematchVotes && data.rematchVotes.white),
+      black: !!(data.rematchVotes && data.rematchVotes.black)
+    };
     return room;
   }
 

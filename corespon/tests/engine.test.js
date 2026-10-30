@@ -7,6 +7,7 @@ const engine = require('../shared/engine');
 const { Room, RoomManager, sameName, buildPgn } = require('../server/rooms');
 const { createMemoryStore } = require('../server/db');
 const { parseLine } = require('../server/env');
+const { computeClassification } = require('../server/classification');
 
 function emptyBoard() {
   const state = engine.newState();
@@ -311,6 +312,67 @@ test('db: memoria registra jugadores sin duplicados', async () => {
   await store.initRoster(['Manuel', 'Alberto']);
   const jugadores = await store.getPlayers();
   assert.deepEqual(jugadores.map(j => j.nombre).sort(), ['Alberto', 'Fernan', 'Manuel']);
+});
+
+// ---- clasificación y revancha ----
+
+test('clasificación: puntos, partidas y desempates', () => {
+  const filas = computeClassification([
+    { blancas: 'Manuel', negras: 'Fernan', resultado: 'blancas' },
+    { blancas: 'Fernan', negras: 'Manuel', resultado: 'tablas' },
+    { blancas: 'Alberto', negras: 'Manuel', resultado: 'negras' }
+  ]);
+
+  assert.deepEqual(filas.map(f => f.nombre), ['Manuel', 'Fernan', 'Alberto']);
+
+  const manuel = filas[0];
+  assert.equal(manuel.partidas, 3);
+  assert.equal(manuel.puntos, 2.5);
+  assert.equal(manuel.victorias, 2);
+  assert.equal(manuel.empates, 1);
+  assert.equal(manuel.derrotas, 0);
+
+  assert.equal(filas[1].puntos, 0.5);
+  assert.equal(filas[2].puntos, 0);
+});
+
+test('clasificación: sin resultados devuelve una lista vacía', () => {
+  assert.deepEqual(computeClassification([]), []);
+  assert.deepEqual(computeClassification(null), []);
+});
+
+test('revancha: exige partida terminada y ambos votos', () => {
+  const room = new Room('ABC234', 'Manuel', 'Fernan');
+  assert.deepEqual(room.voteRematch('white'), { ok: false, error: 'not_finished' });
+
+  room.rendir('white');
+  assert.equal(room.voteRematch('white').started, false);
+  assert.equal(room.players.white.name, 'Manuel');
+});
+
+test('revancha: cambia colores, conserva tokens y reinicia el estado', () => {
+  const room = new Room('ABC234', 'Manuel', 'Fernan');
+  room.players.white.token = 'token-white';
+  room.players.black.token = 'token-black';
+  room.aplicarJugada([6, 1], [4, 1], null);
+  room.rendir('black');
+
+  assert.equal(room.voteRematch('white').started, false);
+  const result = room.voteRematch('black');
+  assert.equal(result.ok, true);
+  assert.equal(result.started, true);
+
+  assert.equal(room.players.white.name, 'Fernan');
+  assert.equal(room.players.black.name, 'Manuel');
+  assert.equal(room.players.white.token, 'token-black');
+  assert.equal(room.players.black.token, 'token-white');
+  assert.equal(room.players.white.color, 'white');
+  assert.equal(room.players.black.color, 'black');
+  assert.equal(room.history.length, 0);
+  assert.equal(room.status.over, false);
+  assert.equal(room.turnColor(), 'white');
+  assert.equal(room.plazos.prorrogas.length, 0);
+  assert.equal(room.resultadoGuardado, false);
 });
 
 // ---- configuración ----

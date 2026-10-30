@@ -24,6 +24,7 @@ loadEnv();
 
 const { RoomManager, Room, normalizeCode, sameName, PLAZO_DEFAULT_MS, GRACIA_DEFAULT_MS, MAX_PRORROGAS, buildPgn } = require('./rooms');
 const { createStore } = require('./db');
+const { computeClassification } = require('./classification');
 const {
   WhatsAppGateway, INVITACION, TURNO, RECORDATORIO, PRORROGA, TIEMPO, FIN,
   invitacionMsg, turnoMsg, recordatorioMsg, prorrogaMsg, tiempoMsg, finMsg
@@ -243,7 +244,6 @@ function createServer(options = {}) {
     socket.on('corespon:join', async (data, respond) => {
       const room = rooms.getRoom(normalizeCode(data.code));
       if (!room) return respond({ ok: false, error: 'not_found' });
-      if (room.status.over) return respond({ ok: false, error: 'game_over' });
 
       const color = room.colorForName(data.name);
       if (!color) {
@@ -273,13 +273,16 @@ function createServer(options = {}) {
 
       tokenMap.set(player.token, room.code);
 
-      // Notificar al otro jugador por WhatsApp
-      const otherColor = color === 'white' ? 'black' : 'white';
-      const otherPlayer = room.players[otherColor];
-      const host = baseUrl(socket);
-      gateway.enqueue(room.code, TURNO, otherPlayer.whatsapp, null, turnoMsg(room, otherColor, host), host);
+      // Notificar al otro jugador por WhatsApp (no en partidas terminadas:
+      // se entra solo a consultar el resultado).
+      if (!room.status.over) {
+        const otherColor = color === 'white' ? 'black' : 'white';
+        const otherPlayer = room.players[otherColor];
+        const host = baseUrl(socket);
+        gateway.enqueue(room.code, TURNO, otherPlayer.whatsapp, null, turnoMsg(room, otherColor, host), host);
+      }
 
-      if (bothConnected(room)) room.timing.runningSince = now;
+      if (!room.status.over && bothConnected(room)) room.timing.runningSince = now;
 
       await persistRoom(room);
 
@@ -376,6 +379,17 @@ function createServer(options = {}) {
       const result = room.extenderPlazo(ctx.color);
       if (result.ok) {
         await persistRoom(room);
+        // Registro histórico de la prórroga (auditoría)
+        store.addProrroga({
+          roomCode: room.code,
+          jugador: result.registro.jugador,
+          motivo: result.registro.motivo || 'solicitud',
+          solicitadoEn: result.registro.solicitadoEn,
+          concedidaEn: new Date().toISOString(),
+          nuevaFecha: result.registro.nuevaFecha
+        }).catch((error) => {
+          if (!quiet) console.error('[corespon] Error guardando la prórroga', room.code + ':', error.message);
+        });
         io.to(room.code).emit('corespon:room:update', room.toPublic());
         const host = baseUrl(socket);
         gateway.enqueue(room.code, PRORROGA, room.players[room.turnColor()].whatsapp, null, prorrogaMsg(room, host), host);
@@ -407,6 +421,43 @@ function createServer(options = {}) {
       gateway.enqueue(room.code, FIN, room.players.black.whatsapp, null, finMsg(room, host), host);
 
       respond({ ok: true, room: room.toPublic() });
+    });
+
+    // Revancha: cuando ambos votan, la sala reinicia con colores cambiados
+    socket.on('corespon:rematch', async (data, respond) => {
+      const room = rooms.getRoom(normalizeCode(data && data.code));
+      if (!room) return respond({ ok: false, error: 'not_found' });
+
+      const ctx = socketContext(socket, room);
+      if (!ctx || !ctx.player.connected) {
+        return respond({ ok: false, error: 'not_in_room' });
+      }
+      if (!room.status.over) return respond({ ok: false, error: 'not_finished' });
+
+      // Asegurar el resultado de la partida terminada antes de reiniciar.
+      await registrarResultado(room);
+
+      const result = room.voteRematch(ctx.color);
+      if (!result.ok) return respond(result);
+
+      if (result.started) {
+        await persistRoom(room);
+
+        // Los colores han cambiado: cada socket recibe el suyo y actualiza su
+        // contexto en el servidor para poder mover en la nueva partida.
+        for (const color of ['white', 'black']) {
+          const player = room.players[color];
+          if (!player.socketId) continue;
+          const target = io.sockets.sockets.get(player.socketId);
+          if (!target) continue;
+          target.data.corespon = { code: room.code, color };
+          target.emit('corespon:color', { code: room.code, color });
+        }
+
+        io.to(room.code).emit('corespon:room:update', room.toPublic());
+      }
+
+      respond(result);
     });
 
     // Reconexión
@@ -505,6 +556,15 @@ function createServer(options = {}) {
     }
   });
 
+  app.get('/api/classification', async (req, res) => {
+    try {
+      const resultados = await store.getResultados();
+      res.json({ ok: true, clasificacion: computeClassification(resultados) });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
   function randomToken() {
     return crypto.randomUUID();
   }
@@ -577,33 +637,74 @@ function createServer(options = {}) {
     return buildPgn(room);
   }
 
-  function persistRoom(room) {
-    const pgn = room.history.length ? estadoAPgn(room) : null;
+  /*
+   * Guarda el resultado definitivo de la partida, una sola vez.
+   * Las revanchas reinician la sala, así que cada partida produce su fila.
+   */
+  async function registrarResultado(room) {
+    if (!room.status.over || room.resultadoGuardado) return null;
+    room.resultadoGuardado = true;
 
-    return store.savePartida({
-      roomCode: room.code,
+    const registro = {
       blancas: room.players.white.name,
       negras: room.players.black.name,
-      fen: estadoAFen(room.state),
-      pgn,
-      snapshot: room.snapshot(),
-      turno: room.turnColor(),
-      estado: room.status.over ? 'terminada' : 'abierta',
       resultado: room.status.winner === 'white' ? 'blancas'
         : room.status.winner === 'black' ? 'negras'
         : 'tablas',
-      creadoEn: room.plazos.creadoEn,
-      movidaEn: new Date().toISOString(),
-      plazoHasta: new Date(room.plazos.plazoHasta).toISOString(),
-      graciaHasta: new Date(room.plazos.graciaHasta).toISOString(),
-      prorrogas: room.plazos.prorrogas,
-      ultimaProrrogaHasta: room.plazos.ultimaProrrogaHasta
-        ? new Date(room.plazos.ultimaProrrogaHasta).toISOString() : null
-    }).catch((error) => {
+      pgn: room.history.length ? estadoAPgn(room) : null,
+      duracionMs: Math.max(0, Date.now() - room.plazos.creadoEn),
+      movimientos: room.history.length,
+      prorrogas: room.plazos.prorrogas.length,
+      terminoPor: room.status.reason === 'resignation' ? 'renuncia'
+        : room.status.reason === 'time' ? 'tiempo'
+        : 'jugada',
+      terminadoEn: new Date().toISOString(),
+      parentRoom: room.parentCode || null
+    };
+
+    try {
+      await store.saveResultado(registro);
+      return registro;
+    } catch (error) {
+      // Permitir reintento en la siguiente escritura de la sala.
+      room.resultadoGuardado = false;
+      if (!quiet) console.error('[corespon] Error guardando el resultado', room.code + ':', error.message);
+      return null;
+    }
+  }
+
+  async function persistRoom(room) {
+    const pgn = room.history.length ? estadoAPgn(room) : null;
+
+    try {
+      await store.savePartida({
+        roomCode: room.code,
+        blancas: room.players.white.name,
+        negras: room.players.black.name,
+        fen: estadoAFen(room.state),
+        pgn,
+        snapshot: room.snapshot(),
+        turno: room.turnColor(),
+        estado: room.status.over ? 'terminada' : 'abierta',
+        resultado: room.status.winner === 'white' ? 'blancas'
+          : room.status.winner === 'black' ? 'negras'
+          : 'tablas',
+        creadoEn: room.plazos.creadoEn,
+        movidaEn: new Date().toISOString(),
+        plazoHasta: new Date(room.plazos.plazoHasta).toISOString(),
+        graciaHasta: new Date(room.plazos.graciaHasta).toISOString(),
+        prorrogas: room.plazos.prorrogas,
+        ultimaProrrogaHasta: room.plazos.ultimaProrrogaHasta
+          ? new Date(room.plazos.ultimaProrrogaHasta).toISOString() : null
+      });
+    } catch (error) {
       // Persistir nunca debe tumbar el proceso: la partida sigue en memoria.
       if (!quiet) console.error('[corespon] Error guardando la partida', room.code + ':', error.message);
       return null;
-    });
+    }
+
+    if (room.status.over) await registrarResultado(room);
+    return true;
   }
 
   /*

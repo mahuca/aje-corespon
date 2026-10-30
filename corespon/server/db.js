@@ -158,11 +158,28 @@ function emptyNotificacion(record) {
   };
 }
 
+function emptyResultado(record) {
+  return {
+    blancas: record.blancas,
+    negras: record.negras,
+    resultado: record.resultado,
+    pgn: record.pgn || null,
+    duracionMs: Number.isFinite(record.duracionMs) ? record.duracionMs
+      : Number.isFinite(record.duracion_ms) ? record.duracion_ms : null,
+    movimientos: Number.isFinite(record.movimientos) ? record.movimientos : null,
+    prorrogas: Number.isFinite(record.prorrogas) ? record.prorrogas : 0,
+    terminoPor: record.terminoPor || record.termino_por || 'jugada',
+    terminadoEn: iso(record.terminadoEn || record.terminado_en),
+    parentRoom: record.parentRoom || record.parent_room || null
+  };
+}
+
 function createMemoryStore() {
   const players = new Map();
   const partidas = new Map();
   const prorrogas = [];
   const notificaciones = [];
+  const resultados = [];
 
   return {
     kind: 'memory',
@@ -238,6 +255,38 @@ function createMemoryStore() {
         .map(emptyPartida);
     },
 
+    // --- Resultados ---
+    async saveResultado(resultado) {
+      const record = {
+        blancas: resultado.blancas,
+        negras: resultado.negras,
+        resultado: resultado.resultado,
+        pgn: resultado.pgn || null,
+        duracionMs: Number.isFinite(resultado.duracionMs) ? resultado.duracionMs : null,
+        movimientos: Number.isFinite(resultado.movimientos) ? resultado.movimientos : null,
+        prorrogas: Number.isFinite(resultado.prorrogas) ? resultado.prorrogas : 0,
+        terminoPor: resultado.terminoPor || 'jugada',
+        terminadoEn: resultado.terminadoEn || new Date().toISOString(),
+        parentRoom: resultado.parentRoom || null
+      };
+      resultados.push(record);
+      return emptyResultado(record);
+    },
+
+    async getResultados() {
+      return resultados
+        .slice()
+        .sort((a, b) => new Date(a.terminadoEn) - new Date(b.terminadoEn))
+        .map(emptyResultado);
+    },
+
+    async getPartidasTerminadasPorPareja(blancas, negras) {
+      return resultados
+        .filter(r => (r.blancas === blancas && r.negras === negras)
+          || (r.blancas === negras && r.negras === blancas))
+        .map(emptyResultado);
+    },
+
     // --- Prórrogas ---
     async getProrrogasDePartida(roomCode) {
       return prorrogas
@@ -272,6 +321,16 @@ function createMemoryStore() {
         n.error = error;
       }
       return n;
+    },
+
+    // --- Estadísticas ---
+    async obtenerEstadisticas() {
+      return {
+        partidasAbiertas: Array.from(partidas.values()).filter(p => p.estado === 'abierta').length,
+        partidasTotales: resultados.length,
+        jugadores: players.size,
+        notificacionesPendientes: notificaciones.filter(n => n.estado === 'pendiente').length
+      };
     }
   };
 }
@@ -452,7 +511,15 @@ function createPostgresStore(connectionString, options = {}) {
          OR (blancas = $2 AND negras = $1) ORDER BY terminado_en DESC`,
         [blancas, negras]
       );
-      return rows;
+      return rows.map(emptyResultado);
+    },
+
+    async getResultados() {
+      await init();
+      const { rows } = await pool.query(
+        `SELECT * FROM corespon_resultados ORDER BY terminado_en`
+      );
+      return rows.map(emptyResultado);
     },
 
     async saveResultado(resultado) {
@@ -535,12 +602,20 @@ function createPostgresStore(connectionString, options = {}) {
 
     async obtenerEstadisticas() {
       await init();
-      const stats = await pool.query(`
+      const { rows } = await pool.query(`
         SELECT
-          (SELECT COUNT(*) FROM corespon_partidas WHERE estado = 'abierta') AS partidas_abiertas,
-          (SELECT COUNT(*) FROM corespon_resultados) AS partidas_totales
+          (SELECT COUNT(*)::int FROM corespon_partidas WHERE estado = 'abierta') AS partidas_abiertas,
+          (SELECT COUNT(*)::int FROM corespon_resultados) AS partidas_totales,
+          (SELECT COUNT(*)::int FROM corespon_players WHERE activa) AS jugadores,
+          (SELECT COUNT(*)::int FROM corespon_notificaciones WHERE estado = 'pendiente') AS notificaciones_pendientes
       `);
-      return JSON.parse(stats.rows[0])[0];
+      const row = rows[0] || {};
+      return {
+        partidasAbiertas: row.partidas_abiertas || 0,
+        partidasTotales: row.partidas_totales || 0,
+        jugadores: row.jugadores || 0,
+        notificacionesPendientes: row.notificaciones_pendientes || 0
+      };
     }
   };
 }

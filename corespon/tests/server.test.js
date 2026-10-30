@@ -262,3 +262,113 @@ test('api: invitar dos veces devuelve la misma partida abierta', async (t) => {
   assert.equal(second.room.code, first.room.code);
   assert.equal(second.existing, true);
 });
+
+test('resultados: rendirse guarda el resultado, la clasificación y el estado', async (t) => {
+  const { instance, store, port, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const { room } = await invite(base);
+  const white = await connect(port);
+  const black = await connect(port);
+  await request(white, 'corespon:join', { code: room.code, name: 'Manuel' });
+  await request(black, 'corespon:join', { code: room.code, name: 'Fernan' });
+
+  const resign = await request(black, 'corespon:resign', { code: room.code });
+  assert.equal(resign.ok, true);
+  assert.equal(resign.room.status.winner, 'white');
+
+  // Un segundo intento no duplica el resultado
+  const again = await request(black, 'corespon:resign', { code: room.code });
+  assert.equal(again.ok, false);
+  assert.equal(again.error, 'game_over');
+
+  const guardados = await store.getPartidasTerminadasPorPareja('Manuel', 'Fernan');
+  assert.equal(guardados.length, 1);
+  assert.equal(guardados[0].resultado, 'blancas');
+  assert.equal(guardados[0].terminoPor, 'renuncia');
+
+  const classification = await fetch(base + '/api/classification').then(r => r.json());
+  assert.equal(classification.ok, true);
+  assert.equal(classification.clasificacion.length, 2);
+  assert.equal(classification.clasificacion[0].nombre, 'Manuel');
+  assert.equal(classification.clasificacion[0].puntos, 1);
+  assert.equal(classification.clasificacion[0].victorias, 1);
+  assert.equal(classification.clasificacion[1].nombre, 'Fernan');
+  assert.equal(classification.clasificacion[1].derrotas, 1);
+
+  const status = await fetch(base + '/api/status').then(r => r.json());
+  assert.equal(status.ok, true);
+  assert.equal(status.estadisticas.partidasTotales, 1);
+  assert.equal(status.estadisticas.partidasAbiertas, 0);
+});
+
+test('revancha: con los dos votos se intercambian los colores y se reinicia', async (t) => {
+  const { instance, port, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const { room } = await invite(base);
+  const white = await connect(port);
+  const black = await connect(port);
+  await request(white, 'corespon:join', { code: room.code, name: 'Manuel' });
+  await request(black, 'corespon:join', { code: room.code, name: 'Fernan' });
+
+  // Blancas se rinde: gana Fernan y la partida queda cerrada
+  await request(white, 'corespon:resign', { code: room.code });
+
+  const firstVote = await request(white, 'corespon:rematch', { code: room.code });
+  assert.equal(firstVote.ok, true);
+  assert.equal(firstVote.started, false);
+
+  const whiteColor = nextEvent(white, 'corespon:color');
+  const blackColor = nextEvent(black, 'corespon:color');
+  const secondVote = await request(black, 'corespon:rematch', { code: room.code });
+  assert.equal(secondVote.ok, true);
+  assert.equal(secondVote.started, true);
+
+  // Cada asiento recibe su color nuevo
+  assert.equal((await whiteColor).color, 'black');
+  assert.equal((await blackColor).color, 'white');
+
+  const live = instance.rooms.getRoom(room.code);
+  assert.equal(live.players.white.name, 'Fernan');
+  assert.equal(live.players.black.name, 'Manuel');
+  assert.equal(live.history.length, 0);
+  assert.equal(live.status.over, false);
+  assert.equal(live.turnColor(), 'white');
+
+  // El que era blancas ya no puede mover; el que era negras (ahora blancas) sí
+  const oldWhite = await request(white, 'corespon:move', {
+    code: room.code, from: [6, 1], to: [4, 1]
+  });
+  assert.equal(oldWhite.ok, false);
+  assert.equal(oldWhite.error, 'not_your_turn');
+
+  const newWhite = await request(black, 'corespon:move', {
+    code: room.code, from: [6, 1], to: [4, 1]
+  });
+  assert.equal(newWhite.ok, true);
+  assert.equal(newWhite.room.turn, 'black');
+});
+
+test('partida terminada: los jugadores pueden volver a abrirla para ver el resultado', async (t) => {
+  const { instance, port, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const { room } = await invite(base);
+  const white = await connect(port);
+  const joined = await request(white, 'corespon:join', { code: room.code, name: 'Manuel' });
+  const token = joined.token;
+  await request(white, 'corespon:resign', { code: room.code });
+
+  white.close();
+  await wait(120);
+
+  const again = await connect(port);
+  const reopened = await request(again, 'corespon:join', {
+    code: room.code, name: 'Manuel', token
+  });
+  assert.equal(reopened.ok, true);
+  assert.equal(reopened.resumed, true);
+  assert.equal(reopened.room.status.over, true);
+  assert.equal(reopened.room.status.winner, 'black');
+});
