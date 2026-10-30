@@ -181,6 +181,16 @@
     emitLocal('extendResult', payload);
   });
 
+  // La revancha intercambia los colores: el servidor avisa a cada asiento.
+  socket.on('corespon:color', (payload) => {
+    if (!payload || (payload.color !== 'white' && payload.color !== 'black')) return;
+    if (session) {
+      session.color = payload.color;
+      saveSession(session);
+    }
+    emitLocal('color', { color: payload.color, code: payload.code });
+  });
+
   // ==================== API ====================
 
   async function joinRoom(code, name) {

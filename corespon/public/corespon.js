@@ -40,7 +40,8 @@
     waiting_player: 'Tu rival ya no está en la sala.',
     no_session: 'No hay ninguna partida guardada.',
     not_scheduled: 'Esa partida no está programada.',
-    not_your_scheduled: 'No es tu turno en esa partida.'
+    not_your_scheduled: 'No es tu turno en esa partida.',
+    not_finished: 'La partida aún no ha terminado.'
   };
 
   const el = {
@@ -1073,42 +1074,50 @@
         el.clasificacionList.innerHTML = '<p class="empty">No se pudo cargar la clasificación.</p>';
         return;
       }
-      const clas = data.clasificacion || {};
-      el.clasificacionList.innerHTML = '';
-      const jugadores = Object.keys(clas).sort();
-      if (!jugadores.length) {
-        el.clasificacionList.innerHTML = '<p class="empty">Aún no hay resultados.</p>';
+
+      const filas = Array.isArray(data.clasificacion) ? data.clasificacion : [];
+      el.clasificacionList.replaceChildren();
+
+      if (!filas.length) {
+        const empty = document.createElement('p');
+        empty.className = 'empty';
+        empty.textContent = 'Aún no hay resultados.';
+        el.clasificacionList.appendChild(empty);
         return;
       }
+
       const table = document.createElement('table');
       table.className = 'clasificacion-table';
-      table.innerHTML = `
-        <thead>
-          <tr>
-            <th>Jugador</th>
-            <th>Partidas</th>
-            <th>Puntos</th>
-            <th>V</th>
-            <th>E</th>
-            <th>D</th>
-          </tr>
-        </thead>
-        <tbody>
-      `;
-      for (const j of jugadores) {
-        const stats = clas[j];
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td>${j}</td>
-          <td>${stats.partidas}</td>
-          <td>${stats.puntos.toFixed(2)}</td>
-          <td>${stats.victorias}</td>
-          <td>${stats.empates}</td>
-          <td>${stats.derrotas}</td>
-        `;
-        table.querySelector('tbody').appendChild(tr);
+
+      const thead = document.createElement('thead');
+      const headRow = document.createElement('tr');
+      for (const label of ['Jugador', 'Partidas', 'Puntos', 'V', 'E', 'D']) {
+        const th = document.createElement('th');
+        th.textContent = label;
+        headRow.appendChild(th);
       }
-      table.innerHTML += '</tbody>';
+      thead.appendChild(headRow);
+      table.appendChild(thead);
+
+      const tbody = document.createElement('tbody');
+      for (const fila of filas) {
+        const tr = document.createElement('tr');
+        const celdas = [
+          fila.nombre,
+          fila.partidas,
+          Number(fila.puntos).toFixed(2),
+          fila.victorias,
+          fila.empates,
+          fila.derrotas
+        ];
+        for (const valor of celdas) {
+          const td = document.createElement('td');
+          td.textContent = String(valor);
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
       el.clasificacionList.appendChild(table);
     } catch (error) {
       console.error('Error cargando clasificación:', error);
@@ -1337,6 +1346,18 @@
 
     renderPlazoCard();
     if (!el.gameScreen.hidden) render();
+  });
+
+  // Revancha: el servidor intercambió los colores y nos dice cuál tenemos.
+  O.on('color', (payload) => {
+    if (!payload || !payload.color) return;
+    myColor = payload.color;
+    orientation = payload.color;
+    pendingPromotion = null;
+    movePending = false;
+    clearSelection();
+    el.promotionOverlay.hidden = true;
+    if (room) render();
   });
 
   O.on('joined', (payload) => {
