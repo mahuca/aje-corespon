@@ -122,9 +122,9 @@ Cambiar una variable de entorno en Render **no redespliega solo**: pulsa
 **Manual Deploy → Deploy latest commit** (o `render deploys create <service>`)
 después de guardarla.
 
-> El servicio antiguo `ajedrez-online` sigue apuntando al repo anterior y usa
-> la misma base Neon. Conviene suspenderlo para que no haya dos instancias
-> escribiendo en las mismas tablas.
+> El servicio antiguo `ajedrez-online` sigue vivo (torneo en curso) y comparte
+> la instancia Neon, pero usa tablas `torneo_*`. Este servicio solo toca
+> `corespon_*`, así que no se pisan. Se puede suspender cuando acabe el torneo.
 
 ## API
 
