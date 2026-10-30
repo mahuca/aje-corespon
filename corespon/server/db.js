@@ -69,10 +69,15 @@ const SCHEMA = [
      room_code TEXT,
      tipo TEXT NOT NULL,           -- 'invitacion' | 'turno' | 'recordatorio' | 'prorroga' | 'tiempo' | 'fin'
      destinatario TEXT,
+     jugador TEXT,
+     texto TEXT,
      estado TEXT NOT NULL DEFAULT 'pendiente',  -- 'pendiente' | 'enviado' | 'fallido'
      enviado_en TIMESTAMPTZ,
      error TEXT
    )`,
+
+  `ALTER TABLE corespon_notificaciones ADD COLUMN IF NOT EXISTS jugador TEXT`,
+  `ALTER TABLE corespon_notificaciones ADD COLUMN IF NOT EXISTS texto TEXT`,
 
   `CREATE TABLE IF NOT EXISTS corespon_resultados (
      blancas TEXT NOT NULL,
@@ -152,6 +157,8 @@ function emptyNotificacion(record) {
     roomCode: record.roomCode || record.room_code || null,
     tipo: record.tipo,
     destinatario: record.destinatario || null,
+    jugador: record.jugador || null,
+    texto: record.texto || null,
     estado: record.estado,
     enviadoEn: iso(record.enviadoEn || record.enviado_en),
     error: record.error || null
@@ -180,6 +187,7 @@ function createMemoryStore() {
   const prorrogas = [];
   const notificaciones = [];
   const resultados = [];
+  let notificacionSeq = 0;
 
   return {
     kind: 'memory',
@@ -301,8 +309,19 @@ function createMemoryStore() {
 
     // --- Notificaciones ---
     async addNotificacion(notif) {
-      notificaciones.push({ ...notif, estado: 'pendiente', enviadoEn: null, error: null });
-      return notif;
+      const record = {
+        id: ++notificacionSeq,
+        roomCode: notif.roomCode || null,
+        tipo: notif.tipo,
+        destinatario: notif.destinatario || null,
+        jugador: notif.jugador || null,
+        texto: notif.texto || null,
+        estado: 'pendiente',
+        enviadoEn: null,
+        error: null
+      };
+      notificaciones.push(record);
+      return emptyNotificacion(record);
     },
 
     async getNotificacionesPendientes(limit = 200) {
@@ -570,9 +589,10 @@ function createPostgresStore(connectionString, options = {}) {
       await init();
       const { rows } = await pool.query(
         `INSERT INTO corespon_notificaciones
-          (room_code, tipo, destinatario, estado, enviado_en, error)
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+          (room_code, tipo, destinatario, jugador, texto, estado, enviado_en, error)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
         [notif.roomCode || null, notif.tipo, notif.destinatario || null,
+         notif.jugador || null, notif.texto || null,
          notif.estado || 'pendiente', notif.enviadoEn || null, notif.error || null]
       );
       return emptyNotificacion(rows[0]);

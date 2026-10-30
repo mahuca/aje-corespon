@@ -12,6 +12,7 @@ const { io } = require('socket.io-client');
 
 const { createServer } = require('../server/server');
 const { createMemoryStore } = require('../server/db');
+const { WhatsAppGateway } = require('../server/whatsapp');
 
 const sockets = [];
 
@@ -48,8 +49,8 @@ function nextEvent(socket, event, timeout = 4000) {
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function boot(store = createMemoryStore()) {
-  const instance = createServer({ quiet: true, store });
+async function boot(store = createMemoryStore(), extra = {}) {
+  const instance = createServer({ quiet: true, store, ...extra });
   const port = await instance.start(0);
   return { instance, store, port, base: `http://127.0.0.1:${port}` };
 }
@@ -371,4 +372,46 @@ test('partida terminada: los jugadores pueden volver a abrirla para ver el resul
   assert.equal(reopened.resumed, true);
   assert.equal(reopened.room.status.over, true);
   assert.equal(reopened.room.status.winner, 'black');
+});
+
+test('notificaciones: las jugadas encolan mensajes completos y se envían una vez', async (t) => {
+  const store = createMemoryStore();
+  const enviados = [];
+  const gateway = new WhatsAppGateway({
+    store,
+    providerName: 'fake',
+    provider: async (text, destino) => {
+      enviados.push({ text, destino });
+      return { id: 'mensaje' };
+    }
+  });
+
+  const { instance, port, base } = await boot(store, { gateway });
+  t.after(() => cleanup(instance));
+
+  const { room } = await invite(base);
+  const white = await connect(port);
+  const black = await connect(port);
+  await request(white, 'corespon:join', { code: room.code, name: 'Manuel' });
+  await request(black, 'corespon:join', { code: room.code, name: 'Fernan' });
+  await request(white, 'corespon:move', { code: room.code, from: [6, 1], to: [4, 1] });
+  await wait(60);
+
+  const pendientes = await store.getNotificacionesPendientes();
+  assert.ok(pendientes.length >= 3, 'debe haber invitación y avisos de turno');
+
+  for (const notif of pendientes) {
+    assert.equal(typeof notif.texto, 'string');
+    assert.ok(notif.texto.includes(room.code), 'el mensaje debe incluir el código');
+    assert.doesNotMatch(notif.texto, /\$\{/);
+    assert.doesNotMatch(notif.texto, /undefined/);
+  }
+
+  const destinatarios = new Set(pendientes.map(n => n.jugador));
+  assert.ok(destinatarios.has('Manuel'));
+  assert.ok(destinatarios.has('Fernan'));
+
+  await gateway.processQueue(50);
+  assert.ok(enviados.length >= 3);
+  assert.equal((await store.getNotificacionesPendientes()).length, 0);
 });

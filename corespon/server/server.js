@@ -85,7 +85,7 @@ function createServer(options = {}) {
 
   const rooms = new RoomManager();
   const store = options.store || createStore({ quiet });
-  const gateway = new WhatsAppGateway({ store, debug: !quiet });
+  const gateway = options.gateway || new WhatsAppGateway({ store, debug: !quiet });
   const timers = [];
 
   // Registrar los jugadores invitados por defecto
@@ -179,13 +179,13 @@ function createServer(options = {}) {
       const blackName = negroObj ? negroObj.nombre : negras;
 
       // Registrar jugadores si no existen
-      for (const obj of [blancoObj, negroObj]) {
+      for (const [obj, nombre] of [[blancoObj, blancas], [negroObj, negras]]) {
         if (!obj) {
-          const nombre = blancoObj ? blancas : negras;
           await store.savePlayer({
             id: nombre.toLowerCase(),
             nombre: nombre,
             activa: true,
+            admin: false,
             whatsapp: null
           });
         }
@@ -211,17 +211,19 @@ function createServer(options = {}) {
       // Guardar en DB (incluye el snapshot completo para poder restaurar)
       await persistRoom(room);
 
-      // Notificar por WhatsApp si los números están registrados
+      // Notificar a los dos jugadores. El gateway decide si el canal necesita
+      // teléfono y no encola nada si no está configurado.
       const host = baseUrl(req);
-      const whiteHasWpp = blancoObj && blancoObj.whatsapp;
-      const blackHasWpp = negroObj && negroObj.whatsapp;
-
-      if (blackHasWpp) {
-        gateway.enqueue(room.code, INVITACION, negroObj.whatsapp, null, invitacionMsg(room, whiteName, host), host);
-      }
-      if (whiteHasWpp) {
-        gateway.enqueue(room.code, TURNO, blancoObj.whatsapp, null, turnoMsg(room, 'white', host), host);
-      }
+      gateway.enqueue(
+        room.code, INVITACION,
+        { nombre: blackName, whatsapp: negroObj && negroObj.whatsapp },
+        invitacionMsg(room, 'black', host), host
+      );
+      gateway.enqueue(
+        room.code, TURNO,
+        { nombre: whiteName, whatsapp: blancoObj && blancoObj.whatsapp },
+        turnoMsg(room, 'white', host), host
+      );
 
       res.json({
         ok: true,
@@ -279,7 +281,7 @@ function createServer(options = {}) {
         const otherColor = color === 'white' ? 'black' : 'white';
         const otherPlayer = room.players[otherColor];
         const host = baseUrl(socket);
-        gateway.enqueue(room.code, TURNO, otherPlayer.whatsapp, null, turnoMsg(room, otherColor, host), host);
+        gateway.enqueue(room.code, TURNO, otherPlayer, turnoMsg(room, otherColor, host), host);
       }
 
       if (!room.status.over && bothConnected(room)) room.timing.runningSince = now;
@@ -353,11 +355,11 @@ function createServer(options = {}) {
       if (!room.status.over) {
         const host = baseUrl(socket);
         const otherColor = room.turnColor() === 'white' ? 'black' : 'white';
-        gateway.enqueue(room.code, TURNO, room.players[otherColor].whatsapp, null, turnoMsg(room, otherColor, host), host);
+        gateway.enqueue(room.code, TURNO, room.players[otherColor], turnoMsg(room, otherColor, host), host);
       } else {
         const host = baseUrl(socket);
-        gateway.enqueue(room.code, FIN, room.players.white.whatsapp, null, finMsg(room, host), host);
-        gateway.enqueue(room.code, FIN, room.players.black.whatsapp, null, finMsg(room, host), host);
+        gateway.enqueue(room.code, FIN, room.players.white, finMsg(room, host), host);
+        gateway.enqueue(room.code, FIN, room.players.black, finMsg(room, host), host);
       }
 
       respond({ ok: true, room: room.toPublic() });
@@ -392,7 +394,7 @@ function createServer(options = {}) {
         });
         io.to(room.code).emit('corespon:room:update', room.toPublic());
         const host = baseUrl(socket);
-        gateway.enqueue(room.code, PRORROGA, room.players[room.turnColor()].whatsapp, null, prorrogaMsg(room, host), host);
+        gateway.enqueue(room.code, PRORROGA, room.players[room.turnColor()], prorrogaMsg(room, room.turnColor(), host), host);
         respond(result);
       } else {
         respond(result);
@@ -417,8 +419,8 @@ function createServer(options = {}) {
       io.to(room.code).emit('corespon:room:update', room.toPublic());
 
       const host = baseUrl(socket);
-      gateway.enqueue(room.code, FIN, room.players.white.whatsapp, null, finMsg(room, host), host);
-      gateway.enqueue(room.code, FIN, room.players.black.whatsapp, null, finMsg(room, host), host);
+      gateway.enqueue(room.code, FIN, room.players.white, finMsg(room, host), host);
+      gateway.enqueue(room.code, FIN, room.players.black, finMsg(room, host), host);
 
       respond({ ok: true, room: room.toPublic() });
     });
@@ -507,8 +509,8 @@ function createServer(options = {}) {
       const loser = room.turnColor();
       const winner = loser === 'white' ? 'black' : 'white';
       const host = baseUrl();
-      gateway.enqueue(room.code, TIEMPO, room.players[loser].whatsapp, null, tiempoMsg(room, loser, host), host);
-      gateway.enqueue(room.code, FIN, room.players[winner].whatsapp, null, finMsg(room, host), host);
+      gateway.enqueue(room.code, TIEMPO, room.players[loser], tiempoMsg(room, loser, host), host);
+      gateway.enqueue(room.code, FIN, room.players[winner], finMsg(room, host), host);
     }
   }, CHECK_DEADLINE_MS));
 
@@ -517,7 +519,7 @@ function createServer(options = {}) {
     const salas = rooms.needReminder();
     for (const room of salas) {
       const host = baseUrl();
-      gateway.enqueue(room.code, RECORDATORIO, room.players[room.turnColor()].whatsapp, null, recordatorioMsg(room, host), host);
+      gateway.enqueue(room.code, RECORDATORIO, room.players[room.turnColor()], recordatorioMsg(room, room.turnColor(), host), host);
     }
   }, CHECK_RECORDATORIO_MS));
 
