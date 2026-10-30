@@ -59,15 +59,15 @@ Verificación: `npm test` (47 pruebas).
 
 ## Fase D — Despliegue, modo espectador y calidad
 
-- [ ] D1. `render.yaml` correcto: `startCommand` apunta a
+- [x] D1. `render.yaml` correcto: `startCommand` apunta a
       `corespon/server.js`, que no existe.
-- [ ] D2. `.gitignore` y sacar `node_modules` del repo;
+- [x] D2. `.gitignore` y sacar `node_modules` del repo;
       resolver `online-chess` (gitlink sin `.gitmodules`).
-- [ ] D3. Cerrar la sesión del servidor en `SIGTERM` (usar `close()`).
-- [ ] D4. Modo espectador: `O.watch()` nunca se llama; falta `/corespon/CODE?ver=1`.
+- [x] D3. Cerrar la sesión del servidor en `SIGTERM` (usar `close()`).
+- [x] D4. Modo espectador: `O.watch()` nunca se llama; falta `/corespon/CODE?ver=1`.
 - [ ] D5. "Salir" avisa de abandono pero no lo aplica: decidir comportamiento.
 - [ ] D6. Revocar el token de GitHub expuesto en `.git/config` y usar SSH.
-- [ ] D7. README con variables, arranque local y despliegue.
+- [x] D7. README con variables, arranque local y despliegue.
 
 ## Fase E — Reglas de negocio pendientes
 
