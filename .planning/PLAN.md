@@ -82,16 +82,16 @@ Verificación: `npm test` (47 pruebas).
   por perdida.
 - **Prórrogas:** +1 día, máximo 3, solo el jugador del turno y antes de caducar.
 - **Invitaciones:** cada jugador crea su sala; el rival entra por código/enlace.
-- **Revanchas:** intercambio de colores (pendiente, Fase B).
+- **Revanchas:** en la misma sala, con intercambio de colores.
 - **Estado:** vanilla JS/HTML + Socket.IO, sin cuentas de usuario.
 
 ## Cómo ejecutar
 
 ```bash
-npm test                 # 40 pruebas
+npm test                 # 66 pruebas
 npm start                # http://localhost:3001/corespon
-npm run init-db          # alta de los 5 jugadores
+npm run init-db          # alta de los 6 jugadores (Abuelo administrador)
 ```
 
 Variables: ver `.env.example` (`PORT`, `BASE_URL`, `DATABASE_URL`,
-`WHATSAPP_*`).
+`NOTIFY_PROVIDER`, `TELEGRAM_*`, `ADMIN_TOKEN`).
