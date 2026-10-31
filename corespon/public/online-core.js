@@ -27,6 +27,10 @@
   let autoResume = false;
   let resumePromise = null;
 
+  // Recupera la sesión guardada al cargar la página. Sin esto, recargar
+  // obligaba a volver a entrar y la reconexión perdía el asiento.
+  session = loadSession();
+
   // ==================== EVENTOS LOCALES ====================
 
   function on(event, fn) {
@@ -80,6 +84,7 @@
       return;
     }
     session = next;
+    autoResume = true;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     } catch (error) {
@@ -90,6 +95,12 @@
   function clearSession() {
     session = null;
     room = null;
+    autoResume = false;
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch (error) {
+      // almacenamiento no disponible: nada que borrar
+    }
   }
 
   function getName() {
@@ -154,7 +165,13 @@
 
   socket.on('connect', () => {
     emitLocal('connection', { status: 'connected' });
-    if (autoResume && session) resume();
+    // Tras una desconexión hay que volver a entrar en la sala: el servidor
+    // pierde el contexto del socket. Si estábamos mirando, volvemos a mirar.
+    if (watching) {
+      watch(watching);
+    } else if (autoResume && session) {
+      resume();
+    }
   });
 
   socket.on('disconnect', (reason) => {
@@ -205,7 +222,13 @@
     const normalized = String(code || '').trim().toUpperCase();
     // El token debe leerse ANTES de leaveRoom(): esa llamada limpia la sesión.
     const token = session && session.code === normalized ? session.token : undefined;
-    if (session) await leaveRoom({ silent: true });
+
+    if (watching) await stopWatching();
+    if (session && session.code !== normalized) {
+      // Cambiar de partida no es abandonar: solo se suelta el asiento
+      // anterior. La partida queda abierta para volver cuando se quiera.
+      await leaveRoom({ silent: true, resign: false });
+    }
 
     const response = await request('corespon:join', {
       code: normalized,
@@ -216,7 +239,7 @@
 
     room = response.room;
     saveSession({
-      code: response.code,
+      code: response.code || response.room.code,
       token: response.token,
       color: response.color,
       name: name || (session ? session.name : '')
@@ -228,9 +251,15 @@
 
   async function leaveRoom(options = {}) {
     const hadSession = !!session;
+    const resign = options.resign !== false;
     if (hadSession && socket.connected) {
-      await request('corespon:leave', { code: session.code, color: session.color }, false);
+      await request('corespon:leave', {
+        code: session.code,
+        color: session.color,
+        resign
+      }, false);
     }
+    if (watching) await stopWatching();
     clearSession();
     if (!options.silent) emitLocal('left');
     return { ok: true };
@@ -239,7 +268,10 @@
   async function sendMove(from, to, promotion) {
     if (!session) return { ok: false, error: 'no_session' };
     if (!socket.connected) return { ok: false, error: 'offline' };
-    return request('corespon:move', { code: session.code, color: session.color, from, to, promotion });
+    // La sala que se está viendo manda: evita enviar la jugada a la última
+    // partida guardada si hay varias abiertas.
+    const code = room && room.code ? room.code : session.code;
+    return request('corespon:move', { code, color: session.color, from, to, promotion });
   }
 
   async function extendRoom(code, color) {
@@ -275,7 +307,10 @@
   async function watch(code) {
     const normalized = String(code || '').trim().toUpperCase();
     const response = await request('corespon:watch', { code: normalized });
-    if (!response.ok) return response;
+    if (!response.ok) {
+      if (response.error === 'not_found') watching = null;
+      return response;
+    }
 
     watching = normalized;
     room = response.room;
@@ -294,20 +329,21 @@
     if (!session) return { ok: false, error: 'no_session' };
     if (resumePromise) return resumePromise;
 
+    const playerName = session.name || getName();
     resumePromise = (async () => {
       const response = await request('corespon:join', {
         code: session.code,
         token: session.token,
-        name: session.name
+        name: playerName
       });
 
       if (response.ok) {
         room = response.room;
         saveSession({
-          code: response.code,
+          code: response.code || response.room.code,
           token: response.token,
           color: response.color,
-          name: session.name
+          name: playerName
         });
         emitLocal('joined', { ...response, resumed: true });
         emitLocal('room', room);

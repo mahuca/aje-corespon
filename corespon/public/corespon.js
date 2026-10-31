@@ -61,6 +61,7 @@
     connectionBadge: document.getElementById('connectionBadge'),
     connectionText: document.getElementById('connectionText'),
     flipBtn: document.getElementById('flipBtn'),
+    lobbyBtn: document.getElementById('lobbyBtn'),
     leaveBtn: document.getElementById('leaveBtn'),
     board: document.getElementById('board'),
     topPlayer: document.getElementById('topPlayer'),
@@ -273,6 +274,12 @@
     if (!orientation) orientation = myColor || 'white';
     document.body.classList.toggle('is-spectator', isSpectator);
     el.spectatorNote.hidden = !isSpectator;
+    el.leaveBtn.textContent = isSpectator ? 'Salir' : 'Abandonar';
+    el.leaveBtn.title = isSpectator
+      ? 'Dejar de ver la partida'
+      : 'Abandonar la partida: cuenta como derrota';
+    el.leaveBtn.setAttribute('aria-label', el.leaveBtn.title);
+    el.lobbyBtn.hidden = isSpectator;
     lastDrawOffer = room.drawOffer || null;
     showGame();
     el.roomCode.textContent = room.code;
@@ -283,7 +290,6 @@
     movePending = false;
     el.promotionOverlay.hidden = true;
     render();
-    startClockLoop();
     renderPlazoCard();
   }
 
@@ -544,6 +550,7 @@
 
     const opponent = other(myColor);
     const opponentName = playerName(opponent);
+    const rival = room.players[opponent];
 
     if (room.status.over) {
       el.statusText.textContent = resultInfo(room.status, opponentName).status;
@@ -555,7 +562,7 @@
       return;
     }
 
-    if (!room.players[opponent]) {
+    if (!rival) {
       el.statusText.textContent = 'Esperando a que se una un rival…';
       return;
     }
@@ -584,10 +591,15 @@
       parts.push(check);
     }
 
-    if (room.players[opponent] && !room.players[opponent].connected) {
+    if (!rival.joined) {
+      const pending = document.createElement('span');
+      pending.className = 'status-muted';
+      pending.textContent = ' · ' + rival.name + ' aún no ha entrado';
+      parts.push(pending);
+    } else if (!rival.connected) {
       const offline = document.createElement('span');
       offline.className = 'status-muted';
-      offline.textContent = ' · Rival desconectado';
+      offline.textContent = ' · Rival sin conexión (la partida sigue)';
       parts.push(offline);
     }
 
@@ -646,13 +658,14 @@
 
   function renderClocks() {
     if (!room || !room.timing) return;
-    const msPlazo = Math.max(0, (room.plazo.plazoHasta || Date.now()) - Date.now());
-    const msGracia = Math.max(0, (room.plazo.graciaHasta || room.plazo.plazoHasta) - Date.now());
+    // El plazo se muestra en la tarjeta de tiempo; estos nodos solo existen
+    // en algunas versiones de la vista. Si no están, no hay nada que pintar,
+    // pero no debe romper el resto del render (resultado, overlays, etc.).
+    const rows = [];
+    if (el.topClock) rows.push({ node: el.topClock, color: other(viewColor()) });
+    if (el.bottomClock) rows.push({ node: el.bottomClock, color: viewColor() });
+    if (!rows.length) return;
 
-    const rows = [
-      { node: el.topClock, color: other(viewColor()) },
-      { node: el.bottomClock, color: viewColor() }
-    ];
     for (const row of rows) {
       const plazo = formatPlazo(room.plazo.plazoHasta, room.plazo.graciaHasta);
       row.node.textContent = plazo.texto;
@@ -691,7 +704,7 @@
 
     const over = room.status.over;
     el.resultOverlay.hidden = !over;
-    el.resultLeaveBtn.textContent = isSpectator ? 'Volver a la lista' : 'Salir';
+    el.resultLeaveBtn.textContent = 'Volver a la lista';
 
     if (!over) return;
 
@@ -1334,7 +1347,9 @@
     }
   }
 
-  async function leaveGame(confirmFirst) {
+  async function leaveGame(confirmFirst, options = {}) {
+    const resign = options.resign !== false;
+
     if (isSpectator) {
       await O.stopWatching();
       window.location.href = '/corespon';
@@ -1348,15 +1363,21 @@
     }
 
     const opponent = other(myColor);
-    const inProgress = !room.status.over && !!room.players[opponent];
-    if (confirmFirst && inProgress) {
+    const rival = room.players[opponent];
+    const inProgress = !room.status.over
+      && !!room.players[myColor] && !!rival
+      && room.players[myColor].joined && rival.joined;
+    const over = !!room.status.over;
+
+    if (confirmFirst && inProgress && resign) {
       const confirmed = window.confirm(
-        '¿Salir de la partida? Se contará como abandono.'
+        '¿Abandonar la partida? Se contará como derrota. ' +
+        'Si solo quieres dejarla para luego, cierra la pestaña: la partida se guarda.'
       );
       if (!confirmed) return;
     }
 
-    await O.leaveRoom();
+    await O.leaveRoom({ resign });
     room = null;
     myColor = null;
     pendingPromotion = null;
@@ -1365,9 +1386,14 @@
     clearSelection();
     showLobby();
     updateUrl(null);
-    showToast(inProgress
-      ? 'Te has rendido: la partida queda en tu contra.'
-      : 'Has salido de la sala');
+
+    if (inProgress && resign) {
+      showToast('Has abandonado: la partida queda en tu contra.');
+    } else if (over) {
+      showToast('Has vuelto a la lista.');
+    } else {
+      showToast('Partida guardada. Puedes volver cuando quieras.');
+    }
   }
 
   // ==================== COPIAR ENLACE ====================
@@ -1587,8 +1613,9 @@
     renderBoard();
   });
 
-  el.leaveBtn.addEventListener('click', () => leaveGame(true));
-  el.resultLeaveBtn.addEventListener('click', () => leaveGame(false));
+  el.lobbyBtn.addEventListener('click', () => leaveGame(false, { resign: false }));
+  el.leaveBtn.addEventListener('click', () => leaveGame(true, { resign: true }));
+  el.resultLeaveBtn.addEventListener('click', () => leaveGame(false, { resign: false }));
   el.cancelPromotionBtn.addEventListener('click', cancelPromotion);
 
   el.rematchBtn.addEventListener('click', async () => {

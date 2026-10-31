@@ -66,8 +66,10 @@ Verificación: `npm test` (77 pruebas, incluidas las de PostgreSQL con pg-mem).
       resolver `online-chess` (gitlink sin `.gitmodules`).
 - [x] D3. Cerrar la sesión del servidor en `SIGTERM` (usar `close()`).
 - [x] D4. Modo espectador: `O.watch()` nunca se llama; falta `/corespon/CODE?ver=1`.
-- [x] D5. "Salir" de una partida en curso es rendirse (decidido); cerrar la
-      pestaña o perder la conexión sigue permitiendo reanudar.
+- [x] D5. **Abandonar** una partida en curso es rendirse; **Partidas** vuelve a
+      la lista sin rendirse (suelta el asiento y la partida sigue). Cerrar la
+      pestaña o perder la conexión permite reanudar; al recargar se recupera la
+      sesión guardada y se vuelve a entrar automáticamente.
 - [ ] D6. Revocar el token de GitHub que estaba en `.git/config`.
       Hecho: el remoto ya usa SSH (`git@github.com:mahuca/aje-corespon.git`).
       Pendiente: revocar el token en GitHub (sigue siendo válido).
@@ -84,8 +86,11 @@ Verificación: `npm test` (77 pruebas, incluidas las de PostgreSQL con pg-mem).
 
 ## Reglas de negocio
 
-- **Plazo:** 2 días por jugada + 1 hora de gracia; la caducidad da la partida
-  por perdida.
+- **Plazo:** 2 días por jugada + 1 hora de gracia; empieza a contar cuando los
+  dos jugadores han entrado. La caducidad da la partida por perdida.
+- **Cambiar de partida:** **Partidas** suelta el asiento sin rendir; solo
+  **Abandonar** rinde. Con dos partidas abiertas se puede saltar de una a otra
+  sin perder la que se deja.
 - **Prórrogas:** +1 día, máximo 3, solo el jugador del turno y antes de caducar.
 - **Invitaciones:** cada jugador crea su sala; el rival entra por código/enlace.
 - **Ranking:** base 1500; victoria +25, derrota −25, tablas 0. Se calcula

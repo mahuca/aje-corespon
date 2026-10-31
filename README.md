@@ -13,6 +13,10 @@ plazos de días, prórrogas, revancha, clasificación y avisos por Telegram.
 - **Revancha** en la misma sala con intercambio de colores.
 - **Tablas por acuerdo**: un jugador propone y el otro acepta o rechaza.
 - **Modo espectador** con `/corespon/CODE?ver=1`.
+- **Varias partidas a la vez**: el botón **Partidas** vuelve a la lista sin
+  rendirse; solo **Abandonar** cuenta como derrota.
+- **Reconexión automática**: al recargar o al volver la conexión se recupera la
+  sesión y el asiento; cerrar la pestaña no pierde la partida.
 - **Ranking**: todos empiezan con **1500**; victoria **+25**, derrota **−25**,
   tablas **0**. Desempate por rating, victorias y nombre.
 - **Notificaciones por Telegram**: invitación, turno, recordatorio, prórroga,
@@ -143,11 +147,14 @@ después de guardarla.
 | `GET /api/whatsapp/queue` | Cola de notificaciones (`?estado=`, con `ADMIN_TOKEN`). |
 
 El juego en tiempo real usa **Socket.IO** (`corespon:join`, `corespon:move`,
-`corespon:resign`, `corespon:extend`, `corespon:draw`, `corespon:draw:accept`,
-`corespon:draw:decline`, `corespon:rematch`, `corespon:watch`).
+`corespon:resign`, `corespon:leave`, `corespon:extend`, `corespon:draw`,
+`corespon:draw:accept`, `corespon:draw:decline`, `corespon:rematch`,
+`corespon:watch`, `corespon:unwatch`).
 
-Salir de una partida en curso desde el botón **Salir** cuenta como rendición;
-cerrar la pestaña o perder la conexión permite reanudar al volver.
+**Abandonar** una partida en curso cuenta como rendición. **Partidas** vuelve a
+la lista sin rendirse: la partida queda abierta y el asiento se suelta hasta
+que se vuelva a entrar. Cerrar la pestaña o perder la conexión permite reanudar
+al volver; el plazo de 2 días empieza cuando los dos jugadores han entrado.
 
 ## Estructura
 
