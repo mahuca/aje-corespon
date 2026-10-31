@@ -290,8 +290,6 @@ function createServer(options = {}) {
   const tokenMap = new Map();
 
   io.on('connection', (socket) => {
-    const now = Date.now();
-
     socket.on('corespon:join', async (data, respond) => {
       const room = rooms.getRoom(normalizeCode(data.code));
       if (!room) return respond({ ok: false, error: 'not_found' });
@@ -309,6 +307,33 @@ function createServer(options = {}) {
         return respond({ ok: false, error: 'seat_taken' });
       }
 
+      // Si este socket estaba en otra sala, desconecta aquel asiento sin
+      // rendirlo: cambiar de partida no es abandonar.
+      const anterior = socket.data && socket.data.corespon;
+      if (anterior && anterior.code && anterior.code !== room.code) {
+        socket.leave(anterior.code);
+        const salaAnterior = rooms.getRoom(anterior.code);
+        if (salaAnterior) {
+          const asientoAnterior = salaAnterior.players[anterior.color];
+          if (asientoAnterior && asientoAnterior.socketId === socket.id) {
+            asientoAnterior.connected = false;
+            asientoAnterior.socketId = null;
+            await persistRoom(salaAnterior);
+            io.to(salaAnterior.code).emit('corespon:room:update', salaAnterior.toPublic());
+          }
+        }
+      }
+
+      // Si estaba viendo otra partida como espectador, deja de verla.
+      if (socket.data.spectator) {
+        const watchedCode = socket.data.spectator;
+        const watched = rooms.getRoom(watchedCode);
+        if (watched) watched.spectators.delete(socket.id);
+        socket.leave(watchedCode);
+        socket.data.spectator = null;
+      }
+
+      const primeraVez = !player.joinedAt;
       player.token = player.token || crypto.randomUUID();
       player.connected = true;
       player.joinedAt = player.joinedAt || Date.now();
@@ -316,18 +341,23 @@ function createServer(options = {}) {
       // de poder mover/rendirse porque socketContext() valida este id.
       player.socketId = socket.id;
       socket.data.corespon = { code: room.code, color };
-      if (socket.data.spectator) {
-        const watched = rooms.getRoom(socket.data.spectator);
-        if (watched) watched.spectators.delete(socket.id);
-        socket.data.spectator = null;
-      }
 
       tokenMap.set(player.token, room.code);
 
-      // Avisar al jugador al que le toca mover, si no es quien acaba de
-      // entrar y ya estaba sentado (no en partidas terminadas: se entra solo
-      // a consultar el resultado).
-      if (!room.status.over) {
+      // La partida empieza cuando los dos han entrado: el plazo corre desde
+      // ese momento, no desde que se creó la sala.
+      if (!room.status.over && primeraVez
+          && room.players.white.joinedAt && room.players.black.joinedAt) {
+        const ahora = Date.now();
+        room.plazos.plazoHasta = ahora + room.plazos.plazoMs;
+        room.plazos.graciaHasta = room.plazos.plazoHasta + room.plazos.graciaMs;
+        room.plazos.recordado = false;
+        room.plazos.avisadoCaducidad = false;
+      }
+
+      // Avisar al jugador al que le toca mover solo la primera vez que el
+      // rival entra; las reconexiones no deben repetir el aviso.
+      if (!room.status.over && primeraVez) {
         const turno = room.turnColor();
         const turnoPlayer = room.players[turno];
         if (turno !== color && turnoPlayer && turnoPlayer.joinedAt) {
@@ -336,12 +366,21 @@ function createServer(options = {}) {
         }
       }
 
-      if (!room.status.over && bothConnected(room)) room.timing.runningSince = now;
+      if (!room.status.over && bothConnected(room)) room.timing.runningSince = Date.now();
 
       await persistRoom(room);
 
       socket.join(room.code);
-      respond({ ok: true, room: room.toPublic(), color, token: player.token, resumed: isReconnect });
+      // Avisar al rival de que el asiento ha vuelto a conectarse.
+      io.to(room.code).emit('corespon:room:update', room.toPublic());
+      respond({
+        ok: true,
+        code: room.code,
+        room: room.toPublic(),
+        color,
+        token: player.token,
+        resumed: isReconnect
+      });
     });
 
     socket.on('corespon:leave', async (data, respond) => {
@@ -351,13 +390,23 @@ function createServer(options = {}) {
       const color = socketContext(socket, room) ? socket.data.corespon.color : data.color;
       const asiento = room.players[color];
       if (asiento && asiento.socketId === socket.id) {
-        // Salir de una partida en curso cuenta como abandono: el aviso del
-        // cliente lo dice y el rival no debe quedarse esperando para siempre.
+        // Solo se rinde cuando el cliente lo pide expresamente (botón
+        // «Abandonar»). Cambiar de partida o volver a la lista usa
+        // `resign:false` y deja la partida abierta.
+        const debeRendirse = data.resign !== false;
         const enCurso = !room.status.over
           && room.players.white && room.players.black
           && room.players.white.joinedAt && room.players.black.joinedAt;
 
-        if (enCurso) {
+        // Suelta el asiento antes de guardar/emitir para que el rival vea
+        // el estado real de conexión.
+        asiento.connected = false;
+        asiento.socketId = null;
+        tokenMap.delete(asiento.token);
+        socket.data.corespon = null;
+        socket.leave(room.code);
+
+        if (enCurso && debeRendirse) {
           room.rendir(color);
           await persistRoom(room);
           io.to(room.code).emit('corespon:room:update', room.toPublic());
@@ -365,24 +414,23 @@ function createServer(options = {}) {
           notificarFin(room, baseUrl(socket));
         } else {
           await persistRoom(room);
+          io.to(room.code).emit('corespon:room:update', room.toPublic());
         }
-
-        asiento.connected = false;
-        asiento.socketId = null;
-        tokenMap.delete(asiento.token);
-        socket.data.corespon = null;
       }
 
-      if (bothConnected(room)) {
-        room.timing.runningSince = null;
-        io.to(room.code).emit('corespon:room:update', room.toPublic());
-      }
       respond({ ok: true });
     });
 
     socket.on('corespon:watch', (data, respond) => {
       const room = rooms.getRoom(normalizeCode(data.code));
       if (!room) return respond({ ok: false, error: 'not_found' });
+
+      // Si estaba viendo otra sala, deja de recibir sus actualizaciones.
+      if (socket.data.spectator && socket.data.spectator !== room.code) {
+        const anterior = rooms.getRoom(socket.data.spectator);
+        if (anterior) anterior.spectators.delete(socket.id);
+        socket.leave(socket.data.spectator);
+      }
 
       socket.data.spectator = room.code;
       room.spectators.add(socket.id);
@@ -391,8 +439,10 @@ function createServer(options = {}) {
     });
 
     socket.on('corespon:unwatch', (data, respond) => {
-      const room = rooms.getRoom(normalizeCode(data.code));
+      const code = normalizeCode(data.code);
+      const room = rooms.getRoom(code);
       if (room) room.spectators.delete(socket.id);
+      if (code) socket.leave(code);
       if (socket.data) socket.data.spectator = null;
       respond({ ok: true });
     });
@@ -592,7 +642,7 @@ function createServer(options = {}) {
       respond({ ok: true, room: room.toPublic() });
     });
 
-    socket.on('disconnect', () => {
+    socket.on('disconnect', async () => {
       if (socket.data && socket.data.spectator) {
         const watching = rooms.getRoom(socket.data.spectator);
         if (watching) watching.spectators.delete(socket.id);
@@ -608,7 +658,12 @@ function createServer(options = {}) {
             player.connected = false;
             player.socketId = null;
             if (bothConnected(room)) room.timing.runningSince = null;
-            persistRoom(room);
+            await persistRoom(room);
+            // El rival debe ver que este jugador se ha desconectado, sin
+            // bloquear la partida: puede seguir jugando cuando le toque.
+            if (!room.status.over) {
+              io.to(room.code).emit('corespon:room:update', room.toPublic());
+            }
           }
         }
       }
@@ -876,9 +931,11 @@ function createServer(options = {}) {
         snapshot: room.snapshot(),
         turno: room.turnColor(),
         estado: room.status.over ? 'terminada' : 'abierta',
-        resultado: room.status.winner === 'white' ? 'blancas'
-          : room.status.winner === 'black' ? 'negras'
-          : 'tablas',
+        resultado: room.status.over
+          ? (room.status.winner === 'white' ? 'blancas'
+            : room.status.winner === 'black' ? 'negras'
+            : 'tablas')
+          : null,
         creadoEn: room.plazos.creadoEn,
         movidaEn: new Date().toISOString(),
         plazoHasta: new Date(room.plazos.plazoHasta).toISOString(),

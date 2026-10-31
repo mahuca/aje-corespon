@@ -13,6 +13,7 @@ const { io } = require('socket.io-client');
 const { createServer } = require('../server/server');
 const { createMemoryStore } = require('../server/db');
 const { WhatsAppGateway } = require('../server/whatsapp');
+const { PLAZO_DEFAULT_MS } = require('../server/rooms');
 
 const sockets = [];
 
@@ -84,6 +85,7 @@ test('flujo: invitar, unirse, mover y recibir la actualización', async (t) => {
 
   const joinedWhite = await request(white, 'corespon:join', { code: room.code, name: 'Manuel' });
   assert.equal(joinedWhite.ok, true);
+  assert.equal(joinedWhite.code, room.code);
   assert.equal(joinedWhite.color, 'white');
   assert.equal(typeof joinedWhite.token, 'string');
   assert.ok(joinedWhite.token.length > 0);
@@ -598,6 +600,131 @@ test('salir: abandonar una partida en curso da la victoria al rival', async (t) 
 
   const stats = await store.obtenerEstadisticas();
   assert.equal(stats.partidasTotales, 1);
+});
+
+test('partida abierta: el resultado queda vacío hasta que termina', async (t) => {
+  const { instance, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const { room } = await invite(base);
+  const response = await fetch(`${base}/api/partidas/${room.code}`);
+  const data = await response.json();
+  assert.equal(data.ok, true);
+  assert.equal(data.partida.estado, 'abierta');
+  assert.equal(data.partida.resultado, null);
+});
+
+test('cambiar de partida: salir sin rendirse mantiene la partida abierta', async (t) => {
+  const store = createMemoryStore();
+  const { instance, port, base } = await boot(store);
+  t.after(() => cleanup(instance));
+
+  const { room } = await invite(base);
+  const white = await connect(port);
+  const black = await connect(port);
+  const joinedWhite = await request(white, 'corespon:join', {
+    code: room.code, name: 'Manuel'
+  });
+  await request(black, 'corespon:join', { code: room.code, name: 'Fernan' });
+
+  const leave = await request(white, 'corespon:leave', {
+    code: room.code, resign: false
+  });
+  assert.equal(leave.ok, true);
+  await wait(30);
+
+  const live = instance.rooms.getRoom(room.code);
+  assert.equal(live.status.over, false);
+  assert.equal(live.players.white.connected, false);
+
+  const rejoin = await request(white, 'corespon:join', {
+    code: room.code, name: 'Manuel', token: joinedWhite.token
+  });
+  assert.equal(rejoin.ok, true);
+  assert.equal(rejoin.color, 'white');
+  assert.equal(live.status.over, false);
+  assert.equal(live.players.white.connected, true);
+});
+
+test('movimiento: el rival desconectado no impide mover', async (t) => {
+  const { instance, port, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const { room } = await invite(base);
+  const white = await connect(port);
+  const black = await connect(port);
+  await request(white, 'corespon:join', { code: room.code, name: 'Manuel' });
+  await request(black, 'corespon:join', { code: room.code, name: 'Fernan' });
+
+  const leave = await request(black, 'corespon:leave', {
+    code: room.code, resign: false
+  });
+  assert.equal(leave.ok, true);
+  await wait(30);
+
+  const live = instance.rooms.getRoom(room.code);
+  assert.equal(live.players.black.connected, false);
+  assert.equal(live.status.over, false);
+
+  const move = await request(white, 'corespon:move', {
+    code: room.code, from: [6, 1], to: [4, 1]
+  });
+  assert.equal(move.ok, true);
+  assert.equal(move.room.history.length, 1);
+  assert.equal(move.room.turn, 'black');
+});
+
+test('plazo: empieza a contar cuando entran los dos', async (t) => {
+  const { instance, port, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const { room } = await invite(base);
+  const white = await connect(port);
+  const black = await connect(port);
+  await request(white, 'corespon:join', { code: room.code, name: 'Manuel' });
+
+  const live = instance.rooms.getRoom(room.code);
+  const antes = live.plazos.plazoHasta;
+  await wait(20);
+
+  await request(black, 'corespon:join', { code: room.code, name: 'Fernan' });
+  assert.ok(live.plazos.plazoHasta > antes, 'el plazo debe reiniciarse al entrar el rival');
+  assert.ok(
+    live.plazos.plazoHasta >= Date.now() + PLAZO_DEFAULT_MS - 2000,
+    'el plazo debe dar los dos días completos desde la entrada'
+  );
+});
+
+test('notificaciones: reconectar no repite el aviso de turno', async (t) => {
+  const store = createMemoryStore();
+  const gateway = new WhatsAppGateway({
+    store,
+    providerName: 'fake',
+    provider: async () => ({ id: 'mensaje' })
+  });
+  const { instance, port, base } = await boot(store, { gateway });
+  t.after(() => cleanup(instance));
+
+  const { room } = await invite(base);
+  const white = await connect(port);
+  const black = await connect(port);
+  await request(white, 'corespon:join', { code: room.code, name: 'Manuel' });
+  const joinedBlack = await request(black, 'corespon:join', {
+    code: room.code, name: 'Fernan'
+  });
+
+  await request(black, 'corespon:leave', { code: room.code, resign: false });
+  await wait(20);
+
+  const black2 = await connect(port);
+  await request(black2, 'corespon:join', {
+    code: room.code, name: 'Fernan', token: joinedBlack.token
+  });
+  await wait(50);
+
+  const turnos = (await store.getNotificacionesPendientes())
+    .filter(n => n.tipo === 'turno');
+  assert.equal(turnos.length, 1);
 });
 
 test('tablas: proponer, aceptar y guardar el resultado', async (t) => {
