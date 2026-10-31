@@ -578,6 +578,39 @@ test('invitación: no se puede crear una partida contra uno mismo', async (t) =>
   assert.equal(response.status, 400);
 });
 
+test('notificaciones: el aviso de turno va al jugador que le toca, no al que movió', async (t) => {
+  const store = createMemoryStore();
+  const enviados = [];
+  const gateway = new WhatsAppGateway({
+    store,
+    providerName: 'fake',
+    provider: async (text, destino) => {
+      enviados.push({ text, destino });
+      return { id: 'mensaje' };
+    }
+  });
+
+  const { instance, port, base } = await boot(store, { gateway });
+  t.after(() => cleanup(instance));
+
+  const { room } = await invite(base);
+  const white = await connect(port);
+  const black = await connect(port);
+  await request(white, 'corespon:join', { code: room.code, name: 'Manuel' });
+  await request(black, 'corespon:join', { code: room.code, name: 'Fernan' });
+
+  // Manuel (blancas) mueve: el aviso de turno debe ir a Fernan (negras).
+  await request(white, 'corespon:move', { code: room.code, from: [6, 4], to: [4, 4] });
+  await wait(60);
+
+  const turnos = (await store.getNotificacionesPendientes())
+    .filter(n => n.tipo === 'turno');
+  const fernanTurnos = turnos.filter(n => n.jugador === 'Fernan');
+  // Manuel (blancas) movió, así que el turno ahora es de las negras: el aviso debe ir a Fernan.
+  assert.ok(fernanTurnos.length >= 1, 'debe enviarse al menos un turno a Fernan tras la jugada de Manuel');
+  assert.equal(turnos[turnos.length - 1].jugador, 'Fernan', 'el último aviso de turno debe ser para Fernan');
+});
+
 test('salir: abandonar una partida en curso da la victoria al rival', async (t) => {
   const store = createMemoryStore();
   const { instance, port, base } = await boot(store);

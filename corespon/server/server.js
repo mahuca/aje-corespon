@@ -472,8 +472,8 @@ function createServer(options = {}) {
 
       if (!room.status.over) {
         const host = baseUrl(socket);
-        const otherColor = room.turnColor() === 'white' ? 'black' : 'white';
-        gateway.enqueue(room.code, TURNO, room.players[otherColor], turnoMsg(room, otherColor, host), host);
+        // Le toca mover al jugador de turnColor(): ese es al que se avisa.
+        gateway.enqueue(room.code, TURNO, room.players[room.turnColor()], turnoMsg(room, room.turnColor(), host), host);
       } else {
         notificarFin(room, baseUrl(socket));
       }
