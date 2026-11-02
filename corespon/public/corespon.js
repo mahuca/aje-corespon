@@ -19,7 +19,10 @@
     return;
   }
 
+  // Roster de reserva: se usa solo si /api/players no responde.
   const PLAYERS = ['Manuel', 'Fernan', 'Alberto', 'Alvaro', 'Alejandro', 'Abuelo'];
+  const ADMIN_TOKEN_KEY = 'corespon.adminToken';
+  const ADMIN_OPEN_KEY = 'corespon.adminOpen';
   const PROMOTION_ORDER = ['queen', 'rook', 'bishop', 'knight'];
   const PROMOTION_NAMES = {
     queen: 'Dama', rook: 'Torre', bishop: 'Alfil', knight: 'Caballo'
@@ -101,6 +104,14 @@
     partidasList: document.getElementById('partidasList'),
     clasificacionSection: document.getElementById('clasificacionSection'),
     clasificacionList: document.getElementById('clasificacionList'),
+    adminSection: document.getElementById('adminSection'),
+    adminToggleBtn: document.getElementById('adminToggleBtn'),
+    adminPanel: document.getElementById('adminPanel'),
+    adminForm: document.getElementById('adminForm'),
+    adminToken: document.getElementById('adminToken'),
+    adminPlayerName: document.getElementById('adminPlayerName'),
+    adminAddBtn: document.getElementById('adminAddBtn'),
+    adminStatus: document.getElementById('adminStatus'),
     plazoCard: document.getElementById('plazoCard'),
     plazoIcon: document.getElementById('plazoIcon'),
     plazoStatus: document.getElementById('plazoStatus'),
@@ -1086,6 +1097,170 @@
 
   // ==================== LOBBY ====================
 
+  function readStorage(key) {
+    try {
+      return window.localStorage.getItem(key);
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function writeStorage(key, value) {
+    try {
+      if (value === null || value === undefined || value === '') {
+        window.localStorage.removeItem(key);
+      } else {
+        window.localStorage.setItem(key, value);
+      }
+    } catch (error) {
+      // Sin almacenamiento (modo privado): se sigue pudiendo jugar.
+    }
+  }
+
+  /*
+   * Rellena los tres desplegables del lobby conservando lo que ya estaba
+   * elegido. La lista llega del servidor, así que un jugador añadido por el
+   * administrador aparece sin recargar la página.
+   */
+  function fillPlayerSelects(nombres) {
+    const lista = Array.isArray(nombres) && nombres.length ? nombres : PLAYERS;
+    const selects = [
+      { node: el.playerName, placeholder: '— Elige tu nombre —' },
+      { node: el.rivalName, placeholder: '— Elige al rival —' },
+      { node: el.joinName, placeholder: 'Mi nombre' }
+    ];
+
+    for (const { node, placeholder } of selects) {
+      if (!node) continue;
+      const anterior = node.value;
+      node.replaceChildren();
+
+      const vacio = document.createElement('option');
+      vacio.value = '';
+      vacio.textContent = placeholder;
+      node.appendChild(vacio);
+
+      for (const nombre of lista) {
+        const opcion = document.createElement('option');
+        opcion.value = nombre;
+        opcion.textContent = nombre;
+        node.appendChild(opcion);
+      }
+
+      if (anterior && lista.includes(anterior)) node.value = anterior;
+    }
+  }
+
+  async function loadPlayers() {
+    let nombres = PLAYERS;
+    try {
+      const res = await fetch('/api/players');
+      const data = await res.json();
+      if (data && data.ok && Array.isArray(data.players) && data.players.length) {
+        nombres = data.players.map(p => p.nombre);
+      }
+    } catch (error) {
+      // Sin conexión: se queda el roster de reserva.
+    }
+    fillPlayerSelects(nombres);
+    return nombres;
+  }
+
+  // ==================== ADMINISTRACIÓN ====================
+
+  function setAdminOpen(open) {
+    el.adminPanel.hidden = !open;
+    el.adminToggleBtn.setAttribute('aria-expanded', String(open));
+    el.adminToggleBtn.textContent = open ? '⚙️ Administración ▲' : '⚙️ Administración';
+    writeStorage(ADMIN_OPEN_KEY, open ? '1' : '');
+  }
+
+  function showAdminStatus(mensaje, tipo) {
+    el.adminStatus.className = 'message ' + (tipo === 'error' ? 'message-error' : 'message-ok');
+    el.adminStatus.textContent = mensaje;
+    el.adminStatus.hidden = false;
+  }
+
+  async function addPlayer(nombre, token) {
+    const headers = { 'content-type': 'application/json' };
+    if (token) headers['x-admin-token'] = token;
+
+    const res = await fetch('/api/tournament/players', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ nombre })
+    });
+
+    let data = null;
+    try {
+      data = await res.json();
+    } catch (error) {
+      data = null;
+    }
+    return { res, data };
+  }
+
+  function setupAdmin() {
+    if (!el.adminForm || !el.adminToggleBtn || !el.adminPanel) return;
+
+    const tokenGuardado = readStorage(ADMIN_TOKEN_KEY) || '';
+    el.adminToken.value = tokenGuardado;
+
+    const abierto = readStorage(ADMIN_OPEN_KEY);
+    setAdminOpen(abierto === '1' || (abierto === null && tokenGuardado !== ''));
+
+    el.adminToggleBtn.addEventListener('click', () => {
+      setAdminOpen(el.adminPanel.hidden);
+    });
+
+    el.adminForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+
+      const nombre = el.adminPlayerName.value.trim();
+      const token = el.adminToken.value.trim();
+
+      if (!nombre) {
+        showAdminStatus('Escribe el nombre del jugador.', 'error');
+        el.adminPlayerName.focus();
+        return;
+      }
+
+      writeStorage(ADMIN_TOKEN_KEY, token);
+      el.adminAddBtn.disabled = true;
+
+      try {
+        const { res, data } = await addPlayer(nombre, token);
+
+        if (res.status === 201 && data && data.ok) {
+          const { torneo, jugador } = data;
+          showAdminStatus(
+            `${jugador.nombre} añadido. El torneo pasa a ${torneo.numeroJugadores} jugadores `
+            + `y ${torneo.totalPartidas} partidas.`,
+            'ok'
+          );
+          el.adminPlayerName.value = '';
+          await loadPlayers();
+          await loadClasificacion();
+          return;
+        }
+
+        if (res.status === 401) {
+          showAdminStatus(
+            'Token incorrecto. Cópialo de Render → Environment → ADMIN_TOKEN.',
+            'error'
+          );
+          return;
+        }
+
+        showAdminStatus((data && data.error) || 'No se pudo añadir el jugador.', 'error');
+      } catch (error) {
+        showAdminStatus('Error de red al añadir el jugador.', 'error');
+      } finally {
+        el.adminAddBtn.disabled = false;
+      }
+    });
+  }
+
   async function loadPartidasAbiertas() {
     try {
       const res = await fetch('/api/partidas');
@@ -1701,38 +1876,22 @@
   function init() {
     buildBoard();
 
+    // Roster de reserva al instante; luego se refresca desde el servidor.
+    fillPlayerSelects(PLAYERS);
+
     const savedName = O.getName();
     if (savedName) {
       el.playerName.value = savedName;
       el.joinName.value = savedName;
     }
 
-    // Rellenar selects con la lista de jugadores
-    for (const p of PLAYERS) {
-      const opt1 = document.createElement('option');
-      opt1.value = p;
-      opt1.textContent = p;
-      el.playerName.appendChild(opt1);
+    loadPlayers().then((nombres) => {
+      if (!savedName || !nombres.includes(savedName)) return;
+      el.playerName.value = savedName;
+      el.joinName.value = savedName;
+    });
 
-      const opt2 = document.createElement('option');
-      opt2.value = p;
-      opt2.textContent = p;
-      el.rivalName.appendChild(opt2);
-
-      const opt3 = document.createElement('option');
-      opt3.value = p;
-      opt3.textContent = p;
-      el.joinName.appendChild(opt3);
-    }
-
-    if (savedName) {
-      const idx = PLAYERS.indexOf(savedName);
-      if (idx !== -1) {
-        el.playerName.selectedIndex = idx + 1;
-        el.rivalName.selectedIndex = idx + 1;
-        el.joinName.selectedIndex = idx + 1;
-      }
-    }
+    setupAdmin();
 
     showLobby();
 

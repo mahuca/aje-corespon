@@ -328,6 +328,36 @@ input:focus {
   text-underline-offset: 2px;
 }
 
+.message-ok {
+  color: #d8f6e6;
+  background: rgba(126, 214, 165, 0.12);
+  border: 1px solid rgba(126, 214, 165, 0.3);
+}
+
+/* ==================== ADMINISTRACIÓN ==================== */
+.admin-section { margin-top: 28px; }
+
+.admin-panel {
+  margin-top: 12px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.admin-panel h2 {
+  margin: 0 0 8px;
+  font-family: var(--serif);
+  font-size: 1.05rem;
+  font-weight: 500;
+}
+
+.admin-form { margin-top: 14px; }
+
+.admin-form .field { margin-bottom: 14px; }
+
+.admin-form .btn { width: 100%; }
+
 /* ==================== PARTIDA ==================== */
 .game {
   width: min(100%, 640px);

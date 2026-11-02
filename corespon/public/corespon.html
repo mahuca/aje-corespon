@@ -101,6 +101,40 @@
           <p class="empty">Cargando clasificación…</p>
         </div>
       </section>
+
+      <section id="adminSection" class="admin-section" aria-labelledby="adminTitle">
+        <button id="adminToggleBtn" class="btn btn-ghost btn-sm" type="button"
+                aria-expanded="false" aria-controls="adminPanel">⚙️ Administración</button>
+
+        <div id="adminPanel" class="admin-panel" hidden>
+          <h2 id="adminTitle">Añadir jugador</h2>
+          <p class="hint">
+            El torneo se recalcula solo: cada jugador nuevo suma parejas
+            (n × (n−1) partidas en total).
+          </p>
+
+          <form id="adminForm" class="admin-form" novalidate>
+            <div class="field">
+              <label for="adminToken">Token de administración</label>
+              <input id="adminToken" type="password" autocomplete="off"
+                     placeholder="x-admin-token" spellcheck="false">
+              <p class="hint">Se guarda solo en este navegador.</p>
+            </div>
+
+            <div class="field">
+              <label for="adminPlayerName">Nombre del jugador</label>
+              <input id="adminPlayerName" type="text" maxlength="40"
+                     placeholder="Nombre" autocomplete="off">
+            </div>
+
+            <button id="adminAddBtn" class="btn btn-secondary" type="submit">
+              Añadir jugador
+            </button>
+          </form>
+
+          <div id="adminStatus" class="message" role="status" aria-live="polite" hidden></div>
+        </div>
+      </section>
     </section>
 
     <!-- ==================== PARTIDA ==================== -->

@@ -589,6 +589,65 @@ test('torneo: el alta de jugadores exige token si está definido', async (t) => 
   assert.equal(data.torneo.totalPartidas, 42);
 });
 
+test('torneo: el alta normaliza el nombre y el jugador entra en la clasificación', async (t) => {
+  const { instance, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const alta = await fetch(base + '/api/tournament/players', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ nombre: '  Nuria  ', admin: true })
+  });
+  assert.equal(alta.status, 201);
+
+  const creado = await alta.json();
+  assert.equal(creado.jugador.nombre, 'Nuria');
+  assert.equal(creado.jugador.id, 'nuria');
+  assert.equal(creado.jugador.admin, true);
+
+  const jugadores = await fetch(base + '/api/players').then(r => r.json());
+  const nuria = jugadores.players.find(p => p.nombre === 'Nuria');
+  assert.ok(nuria, 'el jugador añadido debe aparecer en /api/players');
+  assert.equal(nuria.admin, true);
+
+  const clasificacion = await fetch(base + '/api/classification').then(r => r.json());
+  const fila = clasificacion.clasificacion.find(f => f.nombre === 'Nuria');
+  assert.ok(fila, 'el jugador añadido debe aparecer en la clasificación');
+  assert.equal(fila.rating, 1500);
+  assert.equal(fila.partidas, 0);
+});
+
+test('torneo: el alta rechaza nombres demasiado largos', async (t) => {
+  const { instance, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const alta = await fetch(base + '/api/tournament/players', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ nombre: 'x'.repeat(41) })
+  });
+
+  assert.equal(alta.status, 400);
+  const data = await alta.json();
+  assert.equal(data.ok, false);
+  assert.match(data.error, /largo/i);
+});
+
+test('ui: el lobby incluye el formulario de administración y el endpoint del torneo', async (t) => {
+  const { instance, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const html = await fetch(base + '/corespon').then(r => r.text());
+  for (const id of ['adminForm', 'adminToken', 'adminPlayerName', 'adminAddBtn', 'adminStatus']) {
+    assert.match(html, new RegExp(`id="${id}"`), `falta #${id} en el lobby`);
+  }
+
+  const js = await fetch(base + '/corespon.js').then(r => r.text());
+  assert.match(js, /\/api\/tournament\/players/);
+  assert.match(js, /x-admin-token/);
+  assert.match(js, /\/api\/players/);
+});
+
 test('cierre: close() detiene el servidor y libera el puerto', async () => {
   const { instance } = await boot();
   assert.equal(instance.server.listening, true);
