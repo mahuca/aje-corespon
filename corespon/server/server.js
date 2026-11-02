@@ -777,6 +777,104 @@ function createServer(options = {}) {
     }
   });
 
+  // ============================ TORNEO ============================
+
+  // Formato: round-robin (todos contra todos) con 2 partidas por pareja.
+  // El número de jugadores no es fijo: se calcula con los jugadores activos,
+  // así que n jugadores implican n * (n - 1) partidas (6 jugadores → 30).
+  const PARTIDAS_POR_PAREJA = 2;
+
+  function resumenTorneo(jugadoresActivos, partidasJugadas) {
+    const numeroJugadores = jugadoresActivos.length;
+    const totalParejas = (numeroJugadores * (numeroJugadores - 1)) / 2;
+    const totalPartidas = totalParejas * PARTIDAS_POR_PAREJA;
+
+    const descripcion = numeroJugadores < 2
+      ? 'Hacen falta al menos 2 jugadores para empezar el torneo'
+      : `Round-robin: ${numeroJugadores} jugadores, ${totalParejas} parejas × `
+        + `${PARTIDAS_POR_PAREJA} partidas = ${totalPartidas} partidas totales`;
+
+    return {
+      formato: 'round-robin',
+      numeroJugadores,
+      totalParejas,
+      partidasPorPareja: PARTIDAS_POR_PAREJA,
+      totalPartidas,
+      partidasJugadas,
+      partidasPendientes: Math.max(0, totalPartidas - partidasJugadas),
+      descripcion,
+      jugadores: jugadoresActivos.map(p => ({ id: p.id, nombre: p.nombre }))
+    };
+  }
+
+  /*
+   * Resumen del torneo. Solo lectura: no crea ni modifica nada, así que
+   * puede consultarse siempre y no altera el despliegue en Render.
+   */
+  async function enviarResumenTorneo(req, res) {
+    try {
+      const [jugadores, resultados] = await Promise.all([
+        store.getPlayers(),
+        store.getResultados()
+      ]);
+      const activos = (jugadores || []).filter(p => p.activa);
+      const jugadas = Array.isArray(resultados) ? resultados.length : 0;
+      res.json({ ok: true, ...resumenTorneo(activos, jugadas) });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  }
+
+  app.get('/api/tournament', enviarResumenTorneo);
+  app.get('/api/tournament/start', enviarResumenTorneo);
+
+  /*
+   * Alta de un jugador antes de empezar el torneo.
+   *
+   * Es opcional y aditivo: el roster de 6 jugadores ya se crea al arrancar,
+   * de modo que en Render todo funciona sin llamar a este endpoint. Sirve
+   * para añadir un jugador extra; el torneo se recalcula solo.
+   *
+   * Body: { nombre: "Nombre", admin: false }
+   * Si ADMIN_TOKEN está definido, exige la cabecera x-admin-token.
+   */
+  app.post('/api/tournament/players', async (req, res) => {
+    try {
+      const adminToken = process.env.ADMIN_TOKEN;
+      if (adminToken && req.get('x-admin-token') !== adminToken) {
+        return res.status(401).json({ ok: false, error: 'No autorizado' });
+      }
+
+      const body = req.body || {};
+      const nombre = typeof body.nombre === 'string' ? body.nombre.trim() : '';
+      if (!nombre) {
+        return res.status(400).json({ ok: false, error: 'Se requiere un nombre de jugador' });
+      }
+      if (nombre.length > 40) {
+        return res.status(400).json({ ok: false, error: 'Nombre demasiado largo (máximo 40)' });
+      }
+
+      const id = nombre.toLowerCase().replace(/\s+/g, '-');
+      const jugadores = await store.getPlayers();
+      if (jugadores.some(p => p.id === id)) {
+        return res.status(409).json({ ok: false, error: 'Ya existe un jugador con ese nombre' });
+      }
+
+      const esAdmin = body.admin === true || body.admin === 'true';
+      await store.savePlayer({ id, nombre, activa: true, admin: esAdmin, whatsapp: null });
+
+      const activos = (await store.getPlayers()).filter(p => p.activa);
+      res.status(201).json({
+        ok: true,
+        mensaje: 'Jugador añadido al torneo',
+        jugador: { id, nombre, admin: esAdmin },
+        torneo: resumenTorneo(activos, 0)
+      });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
   function randomToken() {
     return crypto.randomUUID();
   }

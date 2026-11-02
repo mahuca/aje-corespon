@@ -1131,9 +1131,65 @@
     }
   }
 
+  /*
+   * Info del torneo (formato, jugadores y partidas programadas).
+   * Es opcional: si el endpoint no responde, la clasificación se ve igual.
+   */
+  async function loadTorneoInfo() {
+    try {
+      const res = await fetch('/api/tournament');
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data && data.ok ? data : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function renderTorneoBanner(info) {
+    if (!info) return null;
+
+    const contenedor = document.createElement('div');
+    contenedor.className = 'torneo-info';
+
+    const banner = document.createElement('div');
+    banner.className = 'torneo-banner';
+
+    const titulo = document.createElement('strong');
+    titulo.className = 'torneo-titulo';
+    titulo.textContent = '♟️ Torneo round-robin';
+    banner.appendChild(titulo);
+
+    const detalle = document.createElement('span');
+    detalle.className = 'torneo-detalle';
+    detalle.textContent = info.descripcion || '';
+    banner.appendChild(detalle);
+
+    contenedor.appendChild(banner);
+
+    const stats = document.createElement('div');
+    stats.className = 'torneo-stats';
+    const partes = [
+      `👥 ${info.numeroJugadores} jugadores`,
+      `📊 ${info.partidasJugadas ?? 0}/${info.totalPartidas} partidas jugadas`,
+      `🔄 ${info.partidasPorPareja} partidas por pareja`
+    ];
+    for (const texto of partes) {
+      const span = document.createElement('span');
+      span.textContent = texto;
+      stats.appendChild(span);
+    }
+    contenedor.appendChild(stats);
+
+    return contenedor;
+  }
+
   async function loadClasificacion() {
     try {
-      const res = await fetch('/api/classification');
+      const [res, torneoInfo] = await Promise.all([
+        fetch('/api/classification'),
+        loadTorneoInfo()
+      ]);
       const data = await res.json();
       if (!data.ok) {
         el.clasificacionList.innerHTML = '<p class="empty">No se pudo cargar la clasificación.</p>';
@@ -1142,6 +1198,9 @@
 
       const filas = Array.isArray(data.clasificacion) ? data.clasificacion : [];
       el.clasificacionList.replaceChildren();
+
+      const banner = renderTorneoBanner(torneoInfo);
+      if (banner) el.clasificacionList.appendChild(banner);
 
       if (!filas.length) {
         const empty = document.createElement('p');

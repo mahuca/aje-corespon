@@ -482,6 +482,113 @@ test('api: la cola exige el token de administración si está definido', async (
   assert.equal(data.ok, true);
 });
 
+test('torneo: con los 6 jugadores por defecto son 30 partidas', async (t) => {
+  const { instance, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const response = await fetch(base + '/api/tournament');
+  const data = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(data.ok, true);
+  assert.equal(data.formato, 'round-robin');
+  assert.equal(data.numeroJugadores, 6);
+  assert.equal(data.totalParejas, 15);
+  assert.equal(data.partidasPorPareja, 2);
+  assert.equal(data.totalPartidas, 30);
+  assert.equal(data.partidasJugadas, 0);
+  assert.match(data.descripcion, /15 parejas .* 30 partidas/);
+  assert.equal(data.jugadores.length, 6);
+});
+
+test('torneo: el mismo resumen está en /api/tournament/start', async (t) => {
+  const { instance, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const [a, b] = await Promise.all([
+    fetch(base + '/api/tournament').then(r => r.json()),
+    fetch(base + '/api/tournament/start').then(r => r.json())
+  ]);
+
+  assert.deepEqual(a, b);
+});
+
+test('torneo: el cálculo se adapta al número de jugadores', async (t) => {
+  const { instance, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  // 6 por defecto + 2 nuevos = 8 jugadores → 8 * 7 = 56 partidas.
+  for (const nombre of ['Nuria', 'Pablo']) {
+    const alta = await fetch(base + '/api/tournament/players', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ nombre })
+    });
+    assert.equal(alta.status, 201);
+  }
+
+  const data = await fetch(base + '/api/tournament').then(r => r.json());
+  assert.equal(data.numeroJugadores, 8);
+  assert.equal(data.totalParejas, 28);
+  assert.equal(data.totalPartidas, 56);
+});
+
+test('torneo: el alta de jugadores valida nombre y duplicados', async (t) => {
+  const { instance, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const sinNombre = await fetch(base + '/api/tournament/players', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({})
+  });
+  assert.equal(sinNombre.status, 400);
+
+  const vacio = await fetch(base + '/api/tournament/players', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ nombre: '   ' })
+  });
+  assert.equal(vacio.status, 400);
+
+  const existente = await fetch(base + '/api/tournament/players', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ nombre: 'Manuel' })
+  });
+  assert.equal(existente.status, 409);
+});
+
+test('torneo: el alta de jugadores exige token si está definido', async (t) => {
+  const previo = process.env.ADMIN_TOKEN;
+  process.env.ADMIN_TOKEN = 'secreto-de-prueba';
+  t.after(() => {
+    if (previo === undefined) delete process.env.ADMIN_TOKEN;
+    else process.env.ADMIN_TOKEN = previo;
+  });
+
+  const { instance, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const sinToken = await fetch(base + '/api/tournament/players', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ nombre: 'Nuria' })
+  });
+  assert.equal(sinToken.status, 401);
+
+  const conToken = await fetch(base + '/api/tournament/players', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-admin-token': 'secreto-de-prueba' },
+    body: JSON.stringify({ nombre: 'Nuria' })
+  });
+  assert.equal(conToken.status, 201);
+  const data = await conToken.json();
+  assert.equal(data.ok, true);
+  assert.equal(data.torneo.numeroJugadores, 7);
+  assert.equal(data.torneo.totalPartidas, 42);
+});
+
 test('cierre: close() detiene el servidor y libera el puerto', async () => {
   const { instance } = await boot();
   assert.equal(instance.server.listening, true);

@@ -1054,6 +1054,36 @@ body.is-spectator .square { cursor: default; }
 
 /* ==================== CLASIFICACIÓN ==================== */
 .clasificacion-list { margin-top: 12px; }
+
+/* Banner informativo del torneo (round-robin, 2 partidas por pareja). */
+.torneo-info {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+}
+.torneo-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+.torneo-titulo {
+  color: var(--accent-strong);
+  font-family: var(--serif);
+  font-size: 1rem;
+  letter-spacing: 0.02em;
+}
+.torneo-detalle { color: var(--muted); font-size: 0.86rem; }
+.torneo-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-top: 8px;
+  color: var(--muted-2);
+  font-size: 0.82rem;
+}
 .clasificacion-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
 .clasificacion-table th, .clasificacion-table td {
   padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border);
