@@ -770,7 +770,7 @@ function createServer(options = {}) {
       ]);
       res.json({
         ok: true,
-        clasificacion: computeClassification(resultados, jugadores)
+        clasificacion: computeClassification(resultados, jugadores.filter(p => p.activa))
       });
     } catch (error) {
       res.status(500).json({ ok: false, error: error.message });
@@ -829,6 +829,94 @@ function createServer(options = {}) {
   app.get('/api/tournament/start', enviarResumenTorneo);
 
   /*
+   * El token de administración es opcional: si no está definido (local sin
+   * .env), cualquier petición vale. Si está definido (Render), se exige.
+   */
+  function esAdmin(req) {
+    const adminToken = process.env.ADMIN_TOKEN;
+    if (!adminToken) return true;
+    return req.get('x-admin-token') === adminToken;
+  }
+
+  /*
+   * Listado completo (activos e inactivos) para el panel de administración.
+   * Los inactivos conservan su historial, pero no cuentan para el torneo.
+   */
+  app.get('/api/tournament/players', async (req, res) => {
+    try {
+      if (!esAdmin(req)) return res.status(401).json({ ok: false, error: 'No autorizado' });
+
+      const jugadores = await store.getPlayers();
+      res.json({
+        ok: true,
+        jugadores: jugadores.map(p => ({
+          id: p.id,
+          nombre: p.nombre,
+          activa: !!p.activa,
+          admin: !!p.admin
+        }))
+      });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  /*
+   * Alta/baja de un jugador (PATCH { activa: true|false }).
+   *
+   * Dar de baja no borra nada: solo marca `activa = false`, así que el
+   * jugador sale del torneo pero conserva sus partidas y su historial.
+   * Se impide bajar de 2 jugadores activos.
+   */
+  app.patch('/api/tournament/players/:id', async (req, res) => {
+    try {
+      if (!esAdmin(req)) return res.status(401).json({ ok: false, error: 'No autorizado' });
+
+      const body = req.body || {};
+      if (typeof body.activa !== 'boolean') {
+        return res.status(400).json({ ok: false, error: 'Indica activa: true o false' });
+      }
+
+      const jugadores = await store.getPlayers();
+      const jugador = jugadores.find(p => p.id === req.params.id);
+      if (!jugador) {
+        return res.status(404).json({ ok: false, error: 'Jugador no encontrado' });
+      }
+
+      if (!body.activa) {
+        const quedanActivos = jugadores.filter(p => p.activa && p.id !== jugador.id);
+        if (quedanActivos.length < 2) {
+          return res.status(400).json({
+            ok: false,
+            error: 'El torneo necesita al menos 2 jugadores activos'
+          });
+        }
+      }
+
+      await store.setPlayerActiva(jugador.id, body.activa);
+
+      const [todos, resultados] = await Promise.all([
+        store.getPlayers(),
+        store.getResultados()
+      ]);
+      const activos = todos.filter(p => p.activa);
+      const jugadas = Array.isArray(resultados) ? resultados.length : 0;
+
+      res.json({
+        ok: true,
+        jugador: {
+          id: jugador.id,
+          nombre: jugador.nombre,
+          activa: !!body.activa
+        },
+        torneo: resumenTorneo(activos, jugadas)
+      });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  /*
    * Alta de un jugador antes de empezar el torneo.
    *
    * Es opcional y aditivo: el roster de 6 jugadores ya se crea al arrancar,
@@ -840,8 +928,7 @@ function createServer(options = {}) {
    */
   app.post('/api/tournament/players', async (req, res) => {
     try {
-      const adminToken = process.env.ADMIN_TOKEN;
-      if (adminToken && req.get('x-admin-token') !== adminToken) {
+      if (!esAdmin(req)) {
         return res.status(401).json({ ok: false, error: 'No autorizado' });
       }
 
@@ -860,14 +947,14 @@ function createServer(options = {}) {
         return res.status(409).json({ ok: false, error: 'Ya existe un jugador con ese nombre' });
       }
 
-      const esAdmin = body.admin === true || body.admin === 'true';
-      await store.savePlayer({ id, nombre, activa: true, admin: esAdmin, whatsapp: null });
+      const marcarAdmin = body.admin === true || body.admin === 'true';
+      await store.savePlayer({ id, nombre, activa: true, admin: marcarAdmin, whatsapp: null });
 
       const activos = (await store.getPlayers()).filter(p => p.activa);
       res.status(201).json({
         ok: true,
         mensaje: 'Jugador añadido al torneo',
-        jugador: { id, nombre, admin: esAdmin },
+        jugador: { id, nombre, admin: marcarAdmin },
         torneo: resumenTorneo(activos, 0)
       });
     } catch (error) {

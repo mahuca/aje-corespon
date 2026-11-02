@@ -238,6 +238,13 @@ function createMemoryStore() {
       return player;
     },
 
+    async setPlayerActiva(id, activa) {
+      const player = players.get(id);
+      if (!player) return null;
+      player.activa = !!activa;
+      return player;
+    },
+
     // --- Partidas ---
     async getPartidas() {
       return Array.from(partidas.values()).map(emptyPartida);
@@ -478,6 +485,16 @@ function createPostgresStore(connectionString, options = {}) {
         return rows.length ? emptyPlayer(rows[0]) : null;
       }
       return null;
+    },
+
+    async setPlayerActiva(id, activa) {
+      await init();
+      const { rows } = await pool.query(
+        `UPDATE corespon_players SET activa = $2
+         WHERE id = $1 RETURNING id, nombre, activa, admin, whatsapp, creado_en`,
+        [id, !!activa]
+      );
+      return rows.length ? emptyPlayer(rows[0]) : null;
     },
 
     async initRoster(names, adminNames = []) {

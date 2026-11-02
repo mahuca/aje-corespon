@@ -648,6 +648,124 @@ test('ui: el lobby incluye el formulario de administración y el endpoint del to
   assert.match(js, /\/api\/players/);
 });
 
+test('admin: dar de baja saca al jugador del torneo y de la clasificación', async (t) => {
+  const { instance, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const baja = await fetch(base + '/api/tournament/players/alberto', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ activa: false })
+  });
+  assert.equal(baja.status, 200);
+
+  const data = await baja.json();
+  assert.equal(data.ok, true);
+  assert.equal(data.jugador.activa, false);
+  assert.equal(data.torneo.numeroJugadores, 5);
+  assert.equal(data.torneo.totalPartidas, 20);
+
+  const jugadores = await fetch(base + '/api/players').then(r => r.json());
+  assert.equal(jugadores.players.some(p => p.nombre === 'Alberto'), false);
+
+  const clasificacion = await fetch(base + '/api/classification').then(r => r.json());
+  assert.equal(clasificacion.clasificacion.some(f => f.nombre === 'Alberto'), false);
+
+  const alta = await fetch(base + '/api/tournament/players/alberto', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ activa: true })
+  });
+  assert.equal(alta.status, 200);
+
+  const reactivado = await alta.json();
+  assert.equal(reactivado.torneo.numeroJugadores, 6);
+  assert.equal(reactivado.torneo.totalPartidas, 30);
+});
+
+test('admin: no se puede bajar de 2 jugadores activos', async (t) => {
+  const { instance, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  for (const id of ['alberto', 'alvaro', 'alejandro', 'fernan']) {
+    const res = await fetch(base + '/api/tournament/players/' + id, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ activa: false })
+    });
+    assert.equal(res.status, 200);
+  }
+
+  const bloqueada = await fetch(base + '/api/tournament/players/manuel', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ activa: false })
+  });
+  assert.equal(bloqueada.status, 400);
+
+  const data = await bloqueada.json();
+  assert.match(data.error, /2 jugadores activos/);
+});
+
+test('admin: un jugador de baja con historial sigue en la clasificación', async (t) => {
+  const { instance, store, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  await store.saveResultado({
+    blancas: 'Manuel',
+    negras: 'Alberto',
+    resultado: 'blancas'
+  });
+
+  await fetch(base + '/api/tournament/players/alberto', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ activa: false })
+  });
+
+  const clasificacion = await fetch(base + '/api/classification').then(r => r.json());
+  const alberto = clasificacion.clasificacion.find(f => f.nombre === 'Alberto');
+  assert.ok(alberto, 'con historial debe seguir apareciendo');
+  assert.equal(alberto.partidas, 1);
+  assert.equal(alberto.rating, 1475);
+});
+
+test('admin: el listado y el cambio de estado exigen token', async (t) => {
+  const previo = process.env.ADMIN_TOKEN;
+  process.env.ADMIN_TOKEN = 'secreto-de-prueba';
+  t.after(() => {
+    if (previo === undefined) delete process.env.ADMIN_TOKEN;
+    else process.env.ADMIN_TOKEN = previo;
+  });
+
+  const { instance, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const listadoSinToken = await fetch(base + '/api/tournament/players');
+  assert.equal(listadoSinToken.status, 401);
+
+  const listado = await fetch(base + '/api/tournament/players', {
+    headers: { 'x-admin-token': 'secreto-de-prueba' }
+  });
+  assert.equal(listado.status, 200);
+  const lista = await listado.json();
+  assert.equal(lista.jugadores.length, 6);
+
+  const bajaSinToken = await fetch(base + '/api/tournament/players/alberto', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ activa: false })
+  });
+  assert.equal(bajaSinToken.status, 401);
+
+  const baja = await fetch(base + '/api/tournament/players/alberto', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', 'x-admin-token': 'secreto-de-prueba' },
+    body: JSON.stringify({ activa: false })
+  });
+  assert.equal(baja.status, 200);
+});
+
 test('cierre: close() detiene el servidor y libera el puerto', async () => {
   const { instance } = await boot();
   assert.equal(instance.server.listening, true);

@@ -112,6 +112,7 @@
     adminPlayerName: document.getElementById('adminPlayerName'),
     adminAddBtn: document.getElementById('adminAddBtn'),
     adminStatus: document.getElementById('adminStatus'),
+    adminPlayers: document.getElementById('adminPlayers'),
     plazoCard: document.getElementById('plazoCard'),
     plazoIcon: document.getElementById('plazoIcon'),
     plazoStatus: document.getElementById('plazoStatus'),
@@ -1200,6 +1201,105 @@
     return { res, data };
   }
 
+  function renderAdminPlayers(jugadores) {
+    el.adminPlayers.replaceChildren();
+
+    for (const jugador of jugadores) {
+      const fila = document.createElement('div');
+      fila.className = 'admin-player';
+
+      const nombre = document.createElement('span');
+      nombre.className = 'admin-player-name' + (jugador.activa ? '' : ' baja');
+      nombre.textContent = jugador.nombre;
+
+      const estado = document.createElement('span');
+      estado.className = 'admin-player-estado ' + (jugador.activa ? 'activo' : 'inactivo');
+      estado.textContent = jugador.activa ? 'Activo' : 'De baja';
+
+      const boton = document.createElement('button');
+      boton.type = 'button';
+      boton.className = 'btn btn-ghost btn-sm';
+      boton.textContent = jugador.activa ? 'Dar de baja' : 'Reactivar';
+      boton.addEventListener('click', () => togglePlayerActiva(jugador));
+
+      fila.append(nombre, estado, boton);
+      el.adminPlayers.appendChild(fila);
+    }
+  }
+
+  async function loadAdminPlayers() {
+    if (!el.adminPlayers) return;
+
+    const token = el.adminToken ? el.adminToken.value.trim() : '';
+    const headers = token ? { 'x-admin-token': token } : {};
+
+    try {
+      const res = await fetch('/api/tournament/players', { headers });
+
+      if (res.status === 401) {
+        el.adminPlayers.innerHTML = '<p class="empty">Pega el token para ver la lista.</p>';
+        return;
+      }
+
+      const data = await res.json();
+      if (!data || !data.ok) {
+        el.adminPlayers.innerHTML = '<p class="empty">No se pudo cargar la lista.</p>';
+        return;
+      }
+
+      renderAdminPlayers(Array.isArray(data.jugadores) ? data.jugadores : []);
+    } catch (error) {
+      el.adminPlayers.innerHTML = '<p class="empty">Error de red al cargar la lista.</p>';
+    }
+  }
+
+  async function togglePlayerActiva(jugador) {
+    const token = el.adminToken ? el.adminToken.value.trim() : '';
+    const activa = !jugador.activa;
+    const headers = { 'content-type': 'application/json' };
+    if (token) headers['x-admin-token'] = token;
+
+    try {
+      const res = await fetch('/api/tournament/players/' + encodeURIComponent(jugador.id), {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ activa })
+      });
+
+      let data = null;
+      try {
+        data = await res.json();
+      } catch (error) {
+        data = null;
+      }
+
+      if (res.status === 401) {
+        showAdminStatus(
+          'Token incorrecto. Cópialo de Render → Environment → ADMIN_TOKEN.',
+          'error'
+        );
+        return;
+      }
+
+      if (!data || !data.ok) {
+        showAdminStatus((data && data.error) || 'No se pudo cambiar el estado.', 'error');
+        return;
+      }
+
+      showAdminStatus(
+        `${jugador.nombre} ${activa ? 'reactivado' : 'de baja'}. El torneo pasa a `
+        + `${data.torneo.numeroJugadores} jugadores y ${data.torneo.totalPartidas} partidas.`,
+        'ok'
+      );
+
+      await loadAdminPlayers();
+      await loadPlayers();
+      await loadClasificacion();
+    } catch (error) {
+      showAdminStatus('Error de red al cambiar el estado.', 'error');
+    }
+  }
+
   function setupAdmin() {
     if (!el.adminForm || !el.adminToggleBtn || !el.adminPanel) return;
 
@@ -1210,8 +1310,14 @@
     setAdminOpen(abierto === '1' || (abierto === null && tokenGuardado !== ''));
 
     el.adminToggleBtn.addEventListener('click', () => {
-      setAdminOpen(el.adminPanel.hidden);
+      const abrir = el.adminPanel.hidden;
+      setAdminOpen(abrir);
+      if (abrir) loadAdminPlayers();
     });
+
+    el.adminToken.addEventListener('change', () => loadAdminPlayers());
+
+    if (!el.adminPanel.hidden) loadAdminPlayers();
 
     el.adminForm.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -1239,6 +1345,7 @@
             'ok'
           );
           el.adminPlayerName.value = '';
+          await loadAdminPlayers();
           await loadPlayers();
           await loadClasificacion();
           return;
