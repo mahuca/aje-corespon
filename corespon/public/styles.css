@@ -1113,11 +1113,17 @@ body.is-spectator .square { cursor: default; }
 .partidas-list { display: flex; flex-direction: column; gap: 10px; }
 .partida-item {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  flex-wrap: wrap; row-gap: 8px;
   padding: 12px 16px; background: rgba(255,255,255,0.05);
   border: 1px solid var(--border); border-radius: 12px;
 }
 .partida-players { flex: 1; font-size: 0.95rem; }
 .partida-plazo { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; }
+.turno-badge {
+  display: inline-flex; align-items: center; gap: 4px; padding: 4px 9px;
+  border-radius: 999px; background: rgba(99,179,217,0.14); color: var(--info);
+  font-size: 0.76rem; font-weight: 600; white-space: nowrap;
+}
 .plazo-badge {
   display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px;
   border-radius: 999px; background: rgba(240,199,94,0.1); color: var(--accent);

@@ -766,6 +766,45 @@ test('admin: el listado y el cambio de estado exigen token', async (t) => {
   assert.equal(baja.status, 200);
 });
 
+test('api: /api/partidas informa de a quién le toca mover', async (t) => {
+  const { instance, port, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const { room } = await invite(base);
+
+  const inicial = await fetch(base + '/api/partidas').then(r => r.json());
+  assert.equal(inicial.partidas.length, 1);
+  assert.equal(inicial.partidas[0].turno, 'white');
+  assert.equal(inicial.partidas[0].blancas, 'Manuel');
+  assert.equal(inicial.partidas[0].negras, 'Fernan');
+
+  const white = await connect(port);
+  const black = await connect(port);
+  await request(white, 'corespon:join', { code: room.code, name: 'Manuel' });
+  await request(black, 'corespon:join', { code: room.code, name: 'Fernan' });
+
+  const move = await request(white, 'corespon:move', {
+    code: room.code, from: [6, 1], to: [4, 1]
+  });
+  assert.equal(move.ok, true);
+  await wait(80);
+
+  const tras = await fetch(base + '/api/partidas').then(r => r.json());
+  assert.equal(tras.partidas[0].turno, 'black');
+});
+
+test('ui: la lista de partidas pinta el nombre de quien tiene el turno', async (t) => {
+  const { instance, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const js = await fetch(base + '/corespon.js').then(r => r.text());
+  assert.match(js, /turno-badge/);
+  assert.match(js, /p\.turno === 'white' \? p\.blancas : p\.negras/);
+
+  const css = await fetch(base + '/styles.css').then(r => r.text());
+  assert.match(css, /\.turno-badge/);
+});
+
 test('cierre: close() detiene el servidor y libera el puerto', async () => {
   const { instance } = await boot();
   assert.equal(instance.server.listening, true);

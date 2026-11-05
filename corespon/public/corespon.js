@@ -1385,20 +1385,36 @@
       for (const p of partidas) {
         const item = document.createElement('div');
         item.className = 'partida-item';
-        item.innerHTML = `
-          <div class="partida-players">
-            <strong>${p.blancas}</strong> vs <strong>${p.negras}</strong>
-          </div>
-          <div class="partida-plazo">
-            <span class="plazo-badge" title="Cauca hasta ${p.plazoHasta}">
-              ⏰ Plazo: ${formatFecha(p.plazoHasta)}
-            </span>
-          </div>
-          <button class="btn btn-primary btn-sm ver-partida" data-code="${p.roomCode}">
-            Ver partida
-          </button>
-        `;
-        item.querySelector('.ver-partida').addEventListener('click', () => {
+
+        const jugadores = document.createElement('div');
+        jugadores.className = 'partida-players';
+        const blancas = document.createElement('strong');
+        blancas.textContent = p.blancas;
+        const negras = document.createElement('strong');
+        negras.textContent = p.negras;
+        jugadores.append(blancas, document.createTextNode(' vs '), negras);
+
+        // Turno según el servidor: 'white' | 'black'.
+        const enTurno = p.turno === 'white' ? p.blancas : p.negras;
+        const turno = document.createElement('span');
+        turno.className = 'turno-badge';
+        turno.title = 'Le toca mover';
+        turno.textContent = '▶ ' + enTurno;
+
+        const plazo = document.createElement('div');
+        plazo.className = 'partida-plazo';
+        const plazoBadge = document.createElement('span');
+        plazoBadge.className = 'plazo-badge';
+        plazoBadge.title = 'Plazo hasta ' + formatFecha(p.plazoHasta);
+        plazoBadge.textContent = '⏰ ' + formatFecha(p.plazoHasta);
+        plazo.appendChild(plazoBadge);
+
+        const boton = document.createElement('button');
+        boton.type = 'button';
+        boton.className = 'btn btn-primary btn-sm ver-partida';
+        boton.dataset.code = p.roomCode;
+        boton.textContent = 'Ver partida';
+        boton.addEventListener('click', () => {
           const seleccionado = el.playerName.value;
           if (p.blancas === seleccionado || p.negras === seleccionado) {
             joinViaCode(p.roomCode, seleccionado);
@@ -1406,6 +1422,8 @@
             window.location.href = '/corespon/' + p.roomCode + '?ver=1';
           }
         });
+
+        item.append(jugadores, turno, plazo, boton);
         el.partidasList.appendChild(item);
       }
     } catch (error) {
