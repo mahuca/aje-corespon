@@ -359,9 +359,10 @@
       }
 
       // El token guardado ya no vale (p. ej. tras cerrar las sesiones
-      // abiertas): al lobby con el código puesto para escribir la clave.
+      // abiertas) o hace falta la clave: al lobby con el código puesto para
+      // escribirla. También si el alta de claves está cerrada.
       if (response.error === 'pin_requerido' || response.error === 'pin_incorrecto'
-          || response.error === 'pin_invalido') {
+          || response.error === 'pin_invalido' || response.error === 'alta_cerrada') {
         const code = session.code;
         clearSession();
         emitLocal('pin-required', { ...response, code, name: playerName });

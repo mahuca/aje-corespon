@@ -1915,6 +1915,10 @@
       return;
     }
 
+    // Si falta la clave (o el alta está cerrada), el evento 'pin-required' ya
+    // ha dejado el lobby listo: código, nombre y foco en el campo de la clave.
+    if (esErrorDeClave(response.error)) return;
+
     showToast(errorText(response.error), 'error');
   }
 
@@ -2217,13 +2221,24 @@
    * abiertas) o el servidor pide la clave: volvemos al lobby con el código y
    * el nombre puestos para que solo tenga que confirmar.
    */
+  /*
+   * Errores que se resuelven escribiendo la clave personal en el lobby.
+   */
+  const ERRORES_CLAVE = ['pin_requerido', 'pin_incorrecto', 'pin_invalido', 'alta_cerrada'];
+
+  function esErrorDeClave(error) {
+    return ERRORES_CLAVE.indexOf(error) !== -1;
+  }
+
   O.on('pin-required', (payload) => {
-    if (busy) return;
+    // Este evento puede llegar mientras la página se está reenganchando
+    // (busy), así que no se descarta: prepara el lobby igualmente.
     room = null;
     myColor = null;
     showLobby();
     updateUrl(null);
 
+    const error = (payload && payload.error) || 'pin_requerido';
     const name = (payload && payload.name) || '';
     if (payload && payload.code) el.codeInput.value = payload.code;
     if (name && el.joinName) {
@@ -2231,8 +2246,15 @@
       if (el.joinPin) el.joinPin.value = leerPin(name);
     }
 
-    showLobbyError('Escribe tu clave para volver a la partida.');
-    if (el.joinPin) el.joinPin.focus();
+    showLobbyError(error === 'alta_cerrada'
+      ? errorText('alta_cerrada')
+      : 'Escribe tu clave para volver a la partida.');
+
+    // El formulario está deshabilitado mientras se reanuda, así que el foco se
+    // pone al terminar (el temporizador corre después del setBusy(false)).
+    setTimeout(() => {
+      if (el.joinPin && !el.joinPin.disabled) el.joinPin.focus();
+    }, 0);
   });
 
   O.on('left', () => {

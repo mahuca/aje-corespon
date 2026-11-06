@@ -1249,6 +1249,22 @@ test('alta: el panel exige token cuando está definido', async (t) => {
   assert.equal((await bien.json()).abierta, true);
 });
 
+test('ui: al caducar la sesión el lobby pide la clave sin quedarse a medias', async (t) => {
+  const { instance, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const js = await fetch(base + '/corespon.js').then(r => r.text());
+  assert.match(js, /O\.on\('pin-required'/);
+  // El manejador no puede descartarse por estar "ocupado": si lo hace, el
+  // lobby se queda sin código, sin nombre y sin foco.
+  assert.doesNotMatch(js, /O\.on\('pin-required',[\s\S]{0,60}\n\s*if \(busy\) return;/);
+  assert.match(js, /function esErrorDeClave/);
+
+  const core = await fetch(base + '/online-core.js').then(r => r.text());
+  assert.match(core, /emitLocal\('pin-required'/);
+  assert.match(core, /'alta_cerrada'/);
+});
+
 test('cierre: close() detiene el servidor y libera el puerto', async () => {
   const { instance } = await boot();
   assert.equal(instance.server.listening, true);
