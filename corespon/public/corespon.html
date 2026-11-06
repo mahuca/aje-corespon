@@ -68,12 +68,13 @@
         </div>
 
         <div class="field">
-          <label for="createPin">Tu clave</label>
+          <label for="createPin">Tu clave (4-6 dígitos)</label>
           <input id="createPin" class="pin-input" type="password" inputmode="numeric"
-                 maxlength="6" autocomplete="off" placeholder="4-6 dígitos"
+                 maxlength="6" autocomplete="off" placeholder="1234"
                  aria-describedby="createPinHint">
           <p id="createPinHint" class="hint">
-            La eliges la primera vez; después se recuerda en este dispositivo.
+            Vale para crear y para entrar. Solo se escribe una vez en cada
+            aparato; después se recuerda.
           </p>
         </div>
 
@@ -95,10 +96,15 @@
             <option value="">Mi nombre</option>
           </select>
           <input id="joinPin" class="pin-input" type="password" inputmode="numeric"
-                 maxlength="6" autocomplete="off" placeholder="Clave"
-                 aria-label="Tu clave de 4 a 6 dígitos">
+                 maxlength="6" autocomplete="off" placeholder="Clave 4-6"
+                 aria-label="Tu clave de 4 a 6 dígitos" aria-describedby="joinPinHint">
           <button id="joinBtn" class="btn btn-secondary" type="submit">Entrar</button>
         </form>
+
+        <p id="joinPinHint" class="hint">
+          Tu clave sirve para las dos cosas (crear y entrar) y se escribe una
+          sola vez en cada aparato. Si la pones arriba, aquí aparece sola.
+        </p>
       </div>
 
       <section id="partidasSection" aria-labelledby="partidasTitle">

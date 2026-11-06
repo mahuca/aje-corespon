@@ -1259,10 +1259,27 @@ test('ui: al caducar la sesión el lobby pide la clave sin quedarse a medias', a
   // lobby se queda sin código, sin nombre y sin foco.
   assert.doesNotMatch(js, /O\.on\('pin-required',[\s\S]{0,60}\n\s*if \(busy\) return;/);
   assert.match(js, /function esErrorDeClave/);
+  // La clave se escribe en cualquiera de los dos campos: se sincronizan.
+  assert.match(js, /function sincronizarPin/);
+  assert.match(js, /function pinActual/);
+  // Los errores de asiento no deben acabar en el mensaje genérico.
+  assert.match(js, /seat_taken:/);
+  assert.match(js, /not_your_game:/);
 
   const core = await fetch(base + '/online-core.js').then(r => r.text());
   assert.match(core, /emitLocal\('pin-required'/);
   assert.match(core, /'alta_cerrada'/);
+});
+
+test('ui: los estáticos se revalidan en cada carga (sin caché de 5 min)', async (t) => {
+  const { instance, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  for (const ruta of ['/corespon.js', '/online-core.js', '/styles.css', '/corespon']) {
+    const res = await fetch(base + ruta);
+    const cache = (res.headers.get('cache-control') || '').toLowerCase();
+    assert.match(cache, /max-age=0/, ruta + ' debe revalidarse: ' + cache);
+  }
 });
 
 test('cierre: close() detiene el servidor y libera el puerto', async () => {

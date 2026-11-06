@@ -45,6 +45,8 @@
     not_scheduled: 'Esa partida no está programada.',
     not_your_scheduled: 'No es tu turno en esa partida.',
     not_finished: 'La partida aún no ha terminado.',
+    not_your_game: 'Esa partida no es tuya: comprueba el nombre elegido.',
+    seat_taken: 'Ese asiento está ocupado ahora mismo en otro dispositivo. Espera unos segundos y vuelve a intentarlo.',
     pin_requerido: 'Escribe tu clave para entrar (4-6 dígitos).',
     pin_incorrecto: 'Clave incorrecta. Vuelve a intentarlo.',
     pin_invalido: 'La clave debe tener de 4 a 6 dígitos.',
@@ -1159,11 +1161,31 @@
       return false;
     }
     if (error === 'pin_incorrecto') borrarPin(nombre);
-    if (input) {
-      input.value = '';
-      input.focus();
-    }
+    sincronizarPin('');
+    if (input) input.focus();
     return true;
+  }
+
+  /*
+   * La clave se escribe una sola vez, en cualquiera de los dos campos: se
+   * mantienen sincronizados para que da igual dónde se ponga.
+   */
+  function sincronizarPin(valor) {
+    const texto = String(valor || '');
+    if (el.joinPin && el.joinPin.value !== texto) el.joinPin.value = texto;
+    if (el.createPin && el.createPin.value !== texto) el.createPin.value = texto;
+  }
+
+  /*
+   * Clave que se va a enviar: lo escrito en cualquiera de los campos y, si
+   * los dos están vacíos, la recordada de ese nombre en este aparato.
+   */
+  function pinActual(nombre) {
+    const escrito = (el.joinPin && el.joinPin.value.trim())
+      || (el.createPin && el.createPin.value.trim())
+      || '';
+    if (escrito) return escrito;
+    return leerPin(nombre);
   }
 
   /*
@@ -1200,8 +1222,7 @@
     }
 
     // La clave recordada de cada jugador, sin que tengan que escribirla.
-    if (el.createPin) el.createPin.value = leerPin(el.playerName.value.trim());
-    if (el.joinPin) el.joinPin.value = leerPin(el.joinName.value.trim());
+    sincronizarPin(leerPin(el.playerName.value.trim()) || leerPin(el.joinName.value.trim()));
   }
 
   async function loadPlayers() {
@@ -1859,7 +1880,7 @@
   function joinViaCode(code, name) {
     el.codeInput.value = code.toUpperCase();
     el.joinName.value = name;
-    if (el.joinPin) el.joinPin.value = leerPin(name);
+    sincronizarPin(leerPin(name));
     el.joinForm.requestSubmit();
   }
 
@@ -1939,7 +1960,7 @@
     setBusy(true);
     clearLobbyError();
 
-    const pin = el.createPin ? el.createPin.value.trim() : '';
+    const pin = pinActual(name);
 
     try {
       const res = await fetch('/api/partidas/invitar', {
@@ -1996,7 +2017,7 @@
       showLobbyError('Elige tu nombre para entrar.');
       return;
     }
-    const pin = el.joinPin ? el.joinPin.value.trim() : '';
+    const pin = pinActual(name);
     setBusy(true);
     clearLobbyError();
 
@@ -2243,7 +2264,7 @@
     if (payload && payload.code) el.codeInput.value = payload.code;
     if (name && el.joinName) {
       el.joinName.value = name;
-      if (el.joinPin) el.joinPin.value = leerPin(name);
+      sincronizarPin(leerPin(name));
     }
 
     showLobbyError(error === 'alta_cerrada'
@@ -2276,7 +2297,7 @@
   el.playerName.addEventListener('change', () => {
     const name = el.playerName.value.trim();
     if (name) O.setName(name);
-    if (el.createPin) el.createPin.value = leerPin(name);
+    sincronizarPin(leerPin(name));
   });
 
   el.rivalName.addEventListener('change', () => {
@@ -2287,8 +2308,14 @@
   el.joinName.addEventListener('change', () => {
     const name = el.joinName.value.trim();
     if (name) O.setName(name);
-    if (el.joinPin) el.joinPin.value = leerPin(name);
+    sincronizarPin(leerPin(name));
   });
+
+  // Escribir la clave en cualquiera de los dos campos rellena el otro.
+  for (const campo of [el.joinPin, el.createPin]) {
+    if (!campo) continue;
+    campo.addEventListener('input', () => sincronizarPin(campo.value));
+  }
 
   el.createBtn.addEventListener('click', handleCreate);
   el.joinForm.addEventListener('submit', handleJoin);

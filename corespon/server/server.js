@@ -111,8 +111,11 @@ function createServer(options = {}) {
     next();
   });
 
-  app.use(express.static(publicDir, { index: false, maxAge: '5m' }));
-  app.use('/shared', express.static(sharedDir, { maxAge: '5m' }));
+  // Sin caché: los ficheros se revalidan con ETag en cada carga (304 barato).
+  // Con `maxAge: '5m'` el navegador podía seguir usando JS viejo justo después
+  // de un despliegue y la app parecía rota sin motivo.
+  app.use(express.static(publicDir, { index: false, maxAge: 0 }));
+  app.use('/shared', express.static(sharedDir, { maxAge: 0 }));
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 
