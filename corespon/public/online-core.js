@@ -218,7 +218,7 @@
 
   // ==================== API ====================
 
-  async function joinRoom(code, name) {
+  async function joinRoom(code, name, pin) {
     const normalized = String(code || '').trim().toUpperCase();
     // El token debe leerse ANTES de leaveRoom(): esa llamada limpia la sesión.
     const token = session && session.code === normalized ? session.token : undefined;
@@ -233,7 +233,8 @@
     const response = await request('corespon:join', {
       code: normalized,
       token,
-      name
+      name,
+      pin: pin || undefined
     });
     if (!response.ok) return response;
 
@@ -354,7 +355,18 @@
           || response.error === 'full') {
         clearSession();
         emitLocal('session-lost', response);
+        return response;
       }
+
+      // El token guardado ya no vale (p. ej. tras cerrar las sesiones
+      // abiertas): al lobby con el código puesto para escribir la clave.
+      if (response.error === 'pin_requerido' || response.error === 'pin_incorrecto'
+          || response.error === 'pin_invalido') {
+        const code = session.code;
+        clearSession();
+        emitLocal('pin-required', { ...response, code, name: playerName });
+      }
+
       return response;
     })();
 

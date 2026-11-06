@@ -17,6 +17,10 @@ const { PLAZO_DEFAULT_MS } = require('../server/rooms');
 
 const sockets = [];
 
+// Clave de los jugadores en las pruebas. La primera vez que un jugador entra
+// con ella, el servidor la registra como suya.
+const TEST_PIN = '4321';
+
 function connect(port) {
   return new Promise((resolve, reject) => {
     const socket = io(`http://127.0.0.1:${port}`, {
@@ -31,8 +35,14 @@ function connect(port) {
 }
 
 function request(socket, event, payload, timeout = 5000) {
+  // Los tests no repiten la clave en cada join: se inyecta aquí. Un test que
+  // quiera probar la falta de clave manda `pin: ''` explícitamente.
+  const datos = event === 'corespon:join' && payload && payload.pin === undefined
+    ? { ...payload, pin: TEST_PIN }
+    : payload;
+
   return new Promise((resolve) => {
-    socket.timeout(timeout).emit(event, payload, (error, response) => {
+    socket.timeout(timeout).emit(event, datos, (error, response) => {
       resolve(error ? { ok: false, error: 'timeout' } : response);
     });
   });
@@ -51,16 +61,32 @@ function nextEvent(socket, event, timeout = 4000) {
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function boot(store = createMemoryStore(), extra = {}) {
+  // El alta de claves está cerrada por defecto en producción. En las pruebas
+  // se abre para poder entrar con normalidad; los tests que comprueban el
+  // cierre la cierran explícitamente.
+  await store.setAjuste('alta_claves_hasta', new Date(Date.now() + 3600000).toISOString());
+
   const instance = createServer({ quiet: true, store, ...extra });
   const port = await instance.start(0);
   return { instance, store, port, base: `http://127.0.0.1:${port}` };
 }
 
-async function invite(base, blancas = 'Manuel', negras = 'Fernan') {
+/*
+ * Deja el alta de claves cerrada (o abierta hasta dentro de `horas`).
+ */
+async function enrollment(store, { abierta = false, horas = 2 } = {}) {
+  const valor = abierta
+    ? new Date(Date.now() + horas * 3600000).toISOString()
+    : null;
+  await store.setAjuste('alta_claves_hasta', valor);
+  return valor;
+}
+
+async function invite(base, blancas = 'Manuel', negras = 'Fernan', pin = TEST_PIN) {
   const response = await fetch(base + '/api/partidas/invitar', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ blancas, negras })
+    body: JSON.stringify({ blancas, negras, pin })
   });
   const data = await response.json();
   assert.equal(data.ok, true, 'la invitación debe responder ok');
@@ -805,6 +831,424 @@ test('ui: la lista de partidas pinta el nombre de quien tiene el turno', async (
   assert.match(css, /\.turno-badge/);
 });
 
+test('pin: la primera vez hay que elegir clave y queda registrada', async (t) => {
+  const { instance, port, store, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  // Crear la partida ya registra la clave del creador, así que el que aún no
+  // tiene clave es el rival (Fernan).
+  const { room } = await invite(base);
+  const white = await connect(port);
+
+  const sinClave = await request(white, 'corespon:join', {
+    code: room.code, name: 'Fernan', pin: ''
+  });
+  assert.equal(sinClave.ok, false);
+  assert.equal(sinClave.error, 'pin_requerido');
+
+  const primera = await request(white, 'corespon:join', {
+    code: room.code, name: 'Fernan', pin: '2468'
+  });
+  assert.equal(primera.ok, true);
+  assert.equal(primera.pinGuardado, true);
+
+  const fernan = (await store.getPlayers()).find(p => p.nombre === 'Fernan');
+  assert.ok(fernan.pinHash, 'la clave debe quedar registrada');
+  assert.notEqual(fernan.pinHash, '2468');
+  assert.equal(fernan.pinHash.length, 64);
+});
+
+test('pin: la clave incorrecta no entra y la correcta sí', async (t) => {
+  const { instance, port, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const { room } = await invite(base);
+  const white = await connect(port);
+  await request(white, 'corespon:join', { code: room.code, name: 'Fernan', pin: '2468' });
+  white.close();
+  await wait(80);
+
+  const otro = await connect(port);
+  const mala = await request(otro, 'corespon:join', {
+    code: room.code, name: 'Fernan', pin: '1111'
+  });
+  assert.equal(mala.ok, false);
+  assert.equal(mala.error, 'pin_incorrecto');
+
+  const buena = await request(otro, 'corespon:join', {
+    code: room.code, name: 'Fernan', pin: '2468'
+  });
+  assert.equal(buena.ok, true);
+  assert.equal(buena.pinGuardado, false);
+});
+
+test('pin: el formato debe tener de 4 a 6 dígitos', async (t) => {
+  const { instance, port, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const { room } = await invite(base);
+  const white = await connect(port);
+
+  for (const invalida of ['12', '1234567', 'abcd', '12 34']) {
+    const res = await request(white, 'corespon:join', {
+      code: room.code, name: 'Fernan', pin: invalida
+    });
+    assert.equal(res.error, 'pin_invalido', 'clave rechazada: ' + invalida);
+  }
+});
+
+test('pin: reconectar con el token del asiento no pide la clave', async (t) => {
+  const { instance, port, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const { room } = await invite(base);
+  const white = await connect(port);
+  const joined = await request(white, 'corespon:join', {
+    code: room.code, name: 'Fernan', pin: '2468'
+  });
+  const token = joined.token;
+  white.close();
+  await wait(80);
+
+  const again = await connect(port);
+  const resumed = await request(again, 'corespon:join', {
+    code: room.code, name: 'Fernan', token, pin: ''
+  });
+  assert.equal(resumed.ok, true);
+  assert.equal(resumed.resumed, true);
+  assert.equal(resumed.pinGuardado, false);
+});
+
+test('pin: crear una partida exige la clave del creador', async (t) => {
+  const { instance, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const invitar = (cuerpo) => fetch(base + '/api/partidas/invitar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cuerpo)
+  });
+
+  const sinClave = await invitar({ jugador: 'Manuel', rival: 'Fernan' });
+  assert.equal(sinClave.status, 401);
+  assert.equal((await sinClave.json()).error, 'pin_requerido');
+
+  const ok = await invitar({ jugador: 'Manuel', rival: 'Fernan', pin: '2468' });
+  assert.equal(ok.status, 200);
+  assert.equal((await ok.json()).ok, true);
+
+  // Otra clave no puede crear partidas en nombre de Manuel.
+  const ajeno = await invitar({ jugador: 'Manuel', rival: 'Alberto', pin: '9999' });
+  assert.equal(ajeno.status, 401);
+  assert.equal((await ajeno.json()).error, 'pin_incorrecto');
+});
+
+test('pin: demasiados intentos fallidos bloquean temporalmente', async (t) => {
+  const { instance, port, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const { room } = await invite(base);
+  const white = await connect(port);
+  await request(white, 'corespon:join', { code: room.code, name: 'Fernan', pin: '2468' });
+  white.close();
+  await wait(80);
+
+  const otro = await connect(port);
+  for (let intento = 0; intento < 5; intento += 1) {
+    const res = await request(otro, 'corespon:join', {
+      code: room.code, name: 'Fernan', pin: '1111'
+    });
+    assert.equal(res.error, 'pin_incorrecto');
+  }
+
+  const bloqueado = await request(otro, 'corespon:join', {
+    code: room.code, name: 'Fernan', pin: '2468'
+  });
+  assert.equal(bloqueado.error, 'rate_limited');
+});
+
+test('admin: puede asignar y borrar la clave de un jugador', async (t) => {
+  const { instance, port, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const listado = await fetch(base + '/api/tournament/players').then(r => r.json());
+  assert.equal(listado.jugadores.every(j => j.tieneClave === false), true);
+
+  const asignar = await fetch(base + '/api/tournament/players/manuel', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ pin: '1357' })
+  });
+  assert.equal(asignar.status, 200);
+  const conClave = await asignar.json();
+  assert.equal(conClave.jugador.tieneClave, true);
+
+  // Con la clave asignada ya se puede crear partida y entrar.
+  const { room } = await invite(base, 'Manuel', 'Fernan', '1357');
+  const white = await connect(port);
+  const joined = await request(white, 'corespon:join', {
+    code: room.code, name: 'Manuel', pin: '1357'
+  });
+  assert.equal(joined.ok, true);
+  assert.equal(joined.pinGuardado, false);
+
+  // Y con una clave distinta, no.
+  const otro = await connect(port);
+  const ajeno = await request(otro, 'corespon:join', {
+    code: room.code, name: 'Alberto', pin: '1357'
+  });
+  assert.equal(ajeno.ok, false);
+
+  const borrar = await fetch(base + '/api/tournament/players/manuel', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ pin: null })
+  });
+  assert.equal((await borrar.json()).jugador.tieneClave, false);
+
+  const malFormato = await fetch(base + '/api/tournament/players/manuel', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ pin: '12' })
+  });
+  assert.equal(malFormato.status, 400);
+});
+
+test('admin: cerrar sesiones cambia los tokens sin tocar la partida', async (t) => {
+  const { instance, port, store, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const { room } = await invite(base);
+  const white = await connect(port);
+  const joined = await request(white, 'corespon:join', {
+    code: room.code, name: 'Fernan', pin: '2468'
+  });
+  const tokenViejo = joined.token;
+  await request(white, 'corespon:move', { code: room.code, from: [6, 1], to: [4, 1] });
+  await wait(80);
+
+  const antes = await store.getPartidaPorCodigo(room.code);
+
+  const rotar = await fetch(base + '/api/admin/rotate-seats', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({})
+  });
+  assert.equal(rotar.status, 200);
+  const data = await rotar.json();
+  assert.equal(data.ok, true);
+  assert.equal(data.salas, 1);
+
+  // La partida sigue exactamente igual: solo cambia la credencial.
+  const despues = await store.getPartidaPorCodigo(room.code);
+  assert.equal(despues.fen, antes.fen);
+  assert.equal(despues.pgn, antes.pgn);
+  assert.equal(despues.turno, antes.turno);
+  assert.equal(despues.plazoHasta, antes.plazoHasta);
+
+  const room2 = instance.rooms.getRoom(room.code);
+  assert.notEqual(room2.players.black.token, tokenViejo);
+
+  // El token viejo ya no reengancha: hay que dar la clave otra vez.
+  const nuevo = await connect(port);
+  const conTokenViejo = await request(nuevo, 'corespon:join', {
+    code: room.code, name: 'Fernan', token: tokenViejo, pin: '2468'
+  });
+  assert.equal(conTokenViejo.ok, true);
+  assert.equal(conTokenViejo.resumed, false);
+  assert.notEqual(conTokenViejo.token, tokenViejo);
+});
+
+test('pin: la clave sobrevive al reinicio y la partida sigue jugable', async (t) => {
+  const store = createMemoryStore();
+  const first = await boot(store);
+
+  // Manuel es blancas (mueve primero); su clave la registra invite().
+  const { room } = await invite(first.base);
+  const white = await connect(first.port);
+  const joined = await request(white, 'corespon:join', {
+    code: room.code, name: 'Manuel', pin: TEST_PIN
+  });
+  await request(white, 'corespon:move', { code: room.code, from: [6, 1], to: [4, 1] });
+
+  white.close();
+  await wait(80);
+  await first.instance.close();
+
+  const second = await boot(store);
+  t.after(() => cleanup(second.instance));
+
+  const restored = second.instance.rooms.getRoom(room.code);
+  assert.ok(restored, 'la sala debe existir tras reiniciar');
+  assert.equal(restored.state.board[4][1], '♙');
+  assert.equal(restored.turnColor(), 'black');
+
+  // La clave incorrecta no entra tras el reinicio...
+  const malo = await connect(second.port);
+  const mala = await request(malo, 'corespon:join', {
+    code: room.code, name: 'Manuel', pin: '0000'
+  });
+  assert.equal(mala.ok, false);
+  assert.equal(mala.error, 'pin_incorrecto');
+
+  // ...y el token del asiento sí reengancha sin pedir la clave.
+  const bueno = await connect(second.port);
+  const buena = await request(bueno, 'corespon:join', {
+    code: room.code, name: 'Manuel', token: joined.token, pin: ''
+  });
+  assert.equal(buena.ok, true);
+  assert.equal(buena.resumed, true);
+});
+
+test('alta: cerrada no deja registrar claves nuevas', async (t) => {
+  const store = createMemoryStore();
+  const { instance, port, base } = await boot(store);
+  t.after(() => cleanup(instance));
+
+  // invite() registra la clave del creador (Manuel); Fernan no tiene clave.
+  const { room } = await invite(base);
+
+  await enrollment(store, { abierta: false });
+
+  const rival = await connect(port);
+  const fuera = await request(rival, 'corespon:join', {
+    code: room.code, name: 'Fernan', pin: '1357'
+  });
+  assert.equal(fuera.ok, false);
+  assert.equal(fuera.error, 'alta_cerrada');
+
+  // Tampoco se puede crear una partida con un nombre sin clave.
+  const crear = await fetch(base + '/api/partidas/invitar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jugador: 'Alberto', rival: 'Alvaro', pin: '2468' })
+  });
+  assert.equal(crear.status, 401);
+  assert.equal((await crear.json()).error, 'alta_cerrada');
+
+  // Quien ya tiene clave sigue entrando con normalidad.
+  const manuel = await connect(port);
+  const conClave = await request(manuel, 'corespon:join', {
+    code: room.code, name: 'Manuel', pin: TEST_PIN
+  });
+  assert.equal(conClave.ok, true);
+  assert.equal(conClave.pinGuardado, false);
+});
+
+test('alta: cerrada no afecta a quien ya tiene clave, y el token sigue valiendo', async (t) => {
+  const store = createMemoryStore();
+  const { instance, port, base } = await boot(store);
+  t.after(() => cleanup(instance));
+
+  // El administrador asigna la clave de Manuel, así que el alta no le afecta.
+  await fetch(base + '/api/tournament/players/manuel', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ pin: '1357' })
+  });
+  await enrollment(store, { abierta: false });
+
+  const { room } = await invite(base, 'Manuel', 'Fernan', '1357');
+  const s1 = await connect(port);
+  const joined = await request(s1, 'corespon:join', {
+    code: room.code, name: 'Manuel', pin: '1357'
+  });
+  assert.equal(joined.ok, true);
+  s1.close();
+  await wait(80);
+
+  const s2 = await connect(port);
+  const resumed = await request(s2, 'corespon:join', {
+    code: room.code, name: 'Manuel', token: joined.token, pin: ''
+  });
+  assert.equal(resumed.ok, true);
+  assert.equal(resumed.resumed, true);
+
+  // El rival, sin clave y con el alta cerrada, no puede entrar.
+  const rival = await connect(port);
+  const fuera = await request(rival, 'corespon:join', {
+    code: room.code, name: 'Fernan', pin: '2468'
+  });
+  assert.equal(fuera.error, 'alta_cerrada');
+});
+
+test('alta: abrir y cerrar la ventana desde el panel', async (t) => {
+  const store = createMemoryStore();
+  const { instance, base } = await boot(store);
+  t.after(() => cleanup(instance));
+
+  await enrollment(store, { abierta: false });
+
+  const cerrado = await fetch(base + '/api/admin/enrollment').then(r => r.json());
+  assert.equal(cerrado.abierta, false);
+  assert.equal(cerrado.hasta, null);
+  assert.equal(cerrado.jugadores, 6);
+  assert.equal(cerrado.sinClave, 6);
+
+  const abrir = await fetch(base + '/api/admin/enrollment', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ abrir: true, horas: 2 })
+  });
+  assert.equal(abrir.status, 200);
+  const abierto = await abrir.json();
+  assert.equal(abierto.abierta, true);
+  assert.ok(Date.parse(abierto.hasta) > Date.now());
+
+  const malasHoras = await fetch(base + '/api/admin/enrollment', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ abrir: true, horas: 0 })
+  });
+  assert.equal(malasHoras.status, 400);
+
+  const cerrar = await fetch(base + '/api/admin/enrollment', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ abrir: false })
+  });
+  assert.equal((await cerrar.json()).abierta, false);
+});
+
+test('alta: una ventana caducada cuenta como cerrada', async (t) => {
+  const store = createMemoryStore();
+  const { instance, base } = await boot(store);
+  t.after(() => cleanup(instance));
+
+  await store.setAjuste('alta_claves_hasta', new Date(Date.now() - 1000).toISOString());
+
+  const estado = await fetch(base + '/api/admin/enrollment').then(r => r.json());
+  assert.equal(estado.abierta, false);
+  assert.equal(estado.hasta, null);
+});
+
+test('alta: el panel exige token cuando está definido', async (t) => {
+  const previo = process.env.ADMIN_TOKEN;
+  process.env.ADMIN_TOKEN = 'secreto-de-alta';
+  t.after(() => {
+    if (previo === undefined) delete process.env.ADMIN_TOKEN;
+    else process.env.ADMIN_TOKEN = previo;
+  });
+
+  const { instance, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  assert.equal((await fetch(base + '/api/admin/enrollment')).status, 401);
+  assert.equal((await fetch(base + '/api/admin/enrollment', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ abrir: true, horas: 2 })
+  })).status, 401);
+
+  const bien = await fetch(base + '/api/admin/enrollment', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-admin-token': 'secreto-de-alta' },
+    body: JSON.stringify({ abrir: true, horas: 2 })
+  });
+  assert.equal(bien.status, 200);
+  assert.equal((await bien.json()).abierta, true);
+});
+
 test('cierre: close() detiene el servidor y libera el puerto', async () => {
   const { instance } = await boot();
   assert.equal(instance.server.listening, true);
@@ -858,7 +1302,7 @@ test('invitación: el creador puede elegir negras', async (t) => {
   const response = await fetch(base + '/api/partidas/invitar', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ jugador: 'Manuel', rival: 'Fernan', color: 'black' })
+    body: JSON.stringify({ jugador: 'Manuel', rival: 'Fernan', color: 'black', pin: TEST_PIN })
   });
   const data = await response.json();
 
@@ -878,7 +1322,7 @@ test('invitación: el duplicado en orden inverso reutiliza la sala', async (t) =
   const response = await fetch(base + '/api/partidas/invitar', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ jugador: 'Fernan', rival: 'Manuel', color: 'white' })
+    body: JSON.stringify({ jugador: 'Fernan', rival: 'Manuel', color: 'white', pin: TEST_PIN })
   });
   const data = await response.json();
 

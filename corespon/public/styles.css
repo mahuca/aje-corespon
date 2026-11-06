@@ -285,7 +285,17 @@ input:focus {
   background: var(--border);
 }
 
-.join-form { display: flex; gap: 10px; }
+.join-form { display: flex; gap: 10px; flex-wrap: wrap; }
+
+.join-form .code-input { flex: 1 1 120px; }
+.join-form select { flex: 1 1 130px; }
+.join-form .pin-input { flex: 0 1 120px; }
+
+.pin-input {
+  font-family: var(--mono);
+  letter-spacing: 0.22em;
+  text-align: center;
+}
 
 .code-input {
   font-family: var(--mono);
@@ -382,6 +392,8 @@ input:focus {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
+  row-gap: 8px;
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -390,6 +402,54 @@ input:focus {
 
 .admin-player-name { flex: 1; font-size: 0.9rem; }
 .admin-player-name.baja { color: var(--muted-2); text-decoration: line-through; }
+
+.admin-player-clave {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+.admin-player-clave.ok { color: var(--info); background: rgba(99, 179, 217, 0.12); }
+.admin-player-clave.no { color: var(--muted-2); background: rgba(255, 255, 255, 0.06); }
+
+.admin-player-pin {
+  flex: 1 0 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.admin-pin-input {
+  flex: 1 1 130px;
+  max-width: 170px;
+  padding: 7px 10px;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.18em;
+  text-align: center;
+}
+
+.admin-roster-actions {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+}
+
+.admin-enrollment {
+  margin: 8px 0 0;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.admin-enrollment.abierta { color: var(--ok); }
+
+.admin-enrollment-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
 
 .admin-player-estado {
   padding: 2px 8px;

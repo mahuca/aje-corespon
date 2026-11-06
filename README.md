@@ -104,10 +104,11 @@ Variables que deben existir en el panel **Environment**:
 | Variable | Estado |
 | --- | --- |
 | `DATABASE_URL` | configurada (Neon, `/neondb`). |
-| `ADMIN_TOKEN` | configurada; protege `/api/whatsapp/queue`. |
+| `ADMIN_TOKEN` | configurada; protege `/api/whatsapp/queue`, el panel de administración y `POST /api/admin/rotate-seats`. |
 | `BASE_URL` | configurada; enlaces de los avisos de los temporizadores. |
 | `TELEGRAM_BOT_TOKEN` | configurada (bot `@ajecorespon_abuelo_bot`). |
 | `TELEGRAM_CHAT_ID` | configurada (grupo familiar). |
+| `PIN_PEPPER` | opcional; sal que se mezcla con la clave de cada jugador antes de guardarla. Si se cambia, las claves existentes dejan de valer. |
 
 El roster (6 jugadores, Abuelo administrador) se crea solo al arrancar; no
 hace falta ejecutar `npm run init-db` en producción.
@@ -139,8 +140,11 @@ después de guardarla.
 | `POST /api/players/:id/whatsapp` | Guarda el teléfono de un jugador. |
 | `GET /api/partidas` | Partidas abiertas. |
 | `GET /api/partidas/:code` | Estado de una partida. |
-| `POST /api/partidas/invitar` | Crea una invitación. |
+| `POST /api/partidas/invitar` | Crea una invitación (exige la clave del creador). |
 | `DELETE /api/partidas/:code` | Borra una partida (solo con `ADMIN_TOKEN`). |
+| `GET /api/tournament/players` | Roster completo con `activa` y `tieneClave` (admin). |
+| `PATCH /api/tournament/players/:id` | `{ activa }` da de baja/reactiva; `{ pin }` asigna o borra la clave (admin). |
+| `POST /api/admin/rotate-seats` | Cierra las sesiones abiertas cambiando los tokens de asiento (admin). |
 | `GET /api/classification` | Ranking (1500 ±25). |
 | `GET /healthz` | Liveness (no toca la base de datos). |
 | `GET /api/status` | Estadísticas y salud (consulta Postgres). |
@@ -155,6 +159,33 @@ El juego en tiempo real usa **Socket.IO** (`corespon:join`, `corespon:move`,
 la lista sin rendirse: la partida queda abierta y el asiento se suelta hasta
 que se vuelva a entrar. Cerrar la pestaña o perder la conexión permite reanudar
 al volver; el plazo de 2 días empieza cuando los dos jugadores han entrado.
+
+## Clave personal (PIN)
+
+Cada jugador tiene una clave de **4 a 6 dígitos** para demostrar quién es. Sin
+ella, cualquiera con el código de sala podría escribir el nombre de otro y
+mover por él.
+
+- Se pide **una sola vez por dispositivo y navegador**: se guarda en
+  `localStorage` (`corespon.pin.<Nombre>`) y se rellena sola después. Recargar,
+  cambiar de pestaña o que el servicio se duerma **no** la vuelven a pedir.
+- La **primera vez** que alguien entra con un nombre sin clave, la que escriba
+  queda registrada como suya (`pinGuardado: true`). Para que nadie reclame el
+  nombre de otro, el administrador puede asignar las claves desde el panel.
+- Reconectar con el **token del asiento** no pide clave: es la prueba de que ya
+  eras tú.
+- También se exige al **crear** una partida, para que nadie abra un
+  «Abuelo vs Fernan» ajeno.
+- Se guarda hasheada (`sha256` con `PIN_PEPPER`), nunca en claro, y no se
+  devuelve por la API. Tras 5 fallos seguidos, ese jugador queda bloqueado
+  10 minutos.
+- Si alguien olvida la clave: ⚙️ Administración → **Borrar clave**, y elige una
+  nueva al entrar.
+
+Al activar las claves con partidas en curso, el botón **Cerrar sesiones
+abiertas** (`POST /api/admin/rotate-seats`) cambia los tokens de asiento: deja
+fuera cualquier sesión antigua abierta con un nombre ajeno. No se pierde nada:
+el estado, el historial, los plazos y los movimientos quedan igual.
 
 ## Estructura
 

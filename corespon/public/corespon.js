@@ -44,7 +44,11 @@
     no_session: 'No hay ninguna partida guardada.',
     not_scheduled: 'Esa partida no está programada.',
     not_your_scheduled: 'No es tu turno en esa partida.',
-    not_finished: 'La partida aún no ha terminado.'
+    not_finished: 'La partida aún no ha terminado.',
+    pin_requerido: 'Escribe tu clave para entrar (4-6 dígitos).',
+    pin_incorrecto: 'Clave incorrecta. Vuelve a intentarlo.',
+    pin_invalido: 'La clave debe tener de 4 a 6 dígitos.',
+    alta_cerrada: 'El alta de claves está cerrada. Pídele al administrador que la abra.'
   };
 
   const el = {
@@ -57,6 +61,8 @@
     joinForm: document.getElementById('joinForm'),
     joinBtn: document.getElementById('joinBtn'),
     joinName: document.getElementById('joinName'),
+    joinPin: document.getElementById('joinPin'),
+    createPin: document.getElementById('createPin'),
     codeInput: document.getElementById('codeInput'),
     lobbyError: document.getElementById('lobbyError'),
     roomCode: document.getElementById('roomCode'),
@@ -113,6 +119,11 @@
     adminAddBtn: document.getElementById('adminAddBtn'),
     adminStatus: document.getElementById('adminStatus'),
     adminPlayers: document.getElementById('adminPlayers'),
+    adminRotateBtn: document.getElementById('adminRotateBtn'),
+    adminEnrollmentState: document.getElementById('adminEnrollmentState'),
+    adminEnroll2Btn: document.getElementById('adminEnroll2Btn'),
+    adminEnroll24Btn: document.getElementById('adminEnroll24Btn'),
+    adminEnrollCloseBtn: document.getElementById('adminEnrollCloseBtn'),
     plazoCard: document.getElementById('plazoCard'),
     plazoIcon: document.getElementById('plazoIcon'),
     plazoStatus: document.getElementById('plazoStatus'),
@@ -1119,6 +1130,43 @@
   }
 
   /*
+   * Clave personal por jugador, recordada en este dispositivo. Solo se pide
+   * la primera vez: al elegir el nombre se rellena sola.
+   */
+  const PIN_KEY_PREFIX = 'corespon.pin.';
+
+  function leerPin(nombre) {
+    if (!nombre) return '';
+    return readStorage(PIN_KEY_PREFIX + nombre) || '';
+  }
+
+  function guardarPin(nombre, pin) {
+    if (!nombre || !pin) return;
+    writeStorage(PIN_KEY_PREFIX + nombre, pin);
+  }
+
+  function borrarPin(nombre) {
+    if (!nombre) return;
+    writeStorage(PIN_KEY_PREFIX + nombre, null);
+  }
+
+  /*
+   * Si el servidor rechaza la clave, la olvidamos en el dispositivo y
+   * llevamos el foco al campo para que la vuelva a escribir.
+   */
+  function enfocarPin(error, nombre, input) {
+    if (error !== 'pin_requerido' && error !== 'pin_incorrecto' && error !== 'pin_invalido') {
+      return false;
+    }
+    if (error === 'pin_incorrecto') borrarPin(nombre);
+    if (input) {
+      input.value = '';
+      input.focus();
+    }
+    return true;
+  }
+
+  /*
    * Rellena los tres desplegables del lobby conservando lo que ya estaba
    * elegido. La lista llega del servidor, así que un jugador añadido por el
    * administrador aparece sin recargar la página.
@@ -1150,6 +1198,10 @@
 
       if (anterior && lista.includes(anterior)) node.value = anterior;
     }
+
+    // La clave recordada de cada jugador, sin que tengan que escribirla.
+    if (el.createPin) el.createPin.value = leerPin(el.playerName.value.trim());
+    if (el.joinPin) el.joinPin.value = leerPin(el.joinName.value.trim());
   }
 
   async function loadPlayers() {
@@ -1222,8 +1274,230 @@
       boton.textContent = jugador.activa ? 'Dar de baja' : 'Reactivar';
       boton.addEventListener('click', () => togglePlayerActiva(jugador));
 
-      fila.append(nombre, estado, boton);
+      const clave = document.createElement('span');
+      clave.className = 'admin-player-clave ' + (jugador.tieneClave ? 'ok' : 'no');
+      clave.textContent = jugador.tieneClave ? 'Con clave' : 'Sin clave';
+
+      fila.append(nombre, estado, clave, boton);
+
+      // Clave personal del jugador: asignar o borrar (nunca se muestra).
+      const pinWrap = document.createElement('div');
+      pinWrap.className = 'admin-player-pin';
+
+      const pinInput = document.createElement('input');
+      pinInput.type = 'password';
+      pinInput.inputMode = 'numeric';
+      pinInput.maxLength = 6;
+      pinInput.autocomplete = 'off';
+      pinInput.className = 'admin-pin-input';
+      pinInput.placeholder = jugador.tieneClave ? 'Nueva clave' : 'Clave (4-6)';
+      pinInput.setAttribute('aria-label', 'Clave de ' + jugador.nombre);
+
+      const guardarClave = document.createElement('button');
+      guardarClave.type = 'button';
+      guardarClave.className = 'btn btn-ghost btn-sm';
+      guardarClave.textContent = 'Guardar clave';
+      guardarClave.addEventListener('click', () => guardarClaveJugador(jugador, pinInput.value));
+
+      pinWrap.append(pinInput, guardarClave);
+
+      if (jugador.tieneClave) {
+        const quitarClave = document.createElement('button');
+        quitarClave.type = 'button';
+        quitarClave.className = 'btn btn-ghost btn-sm';
+        quitarClave.textContent = 'Borrar clave';
+        quitarClave.addEventListener('click', () => guardarClaveJugador(jugador, null));
+        pinWrap.append(quitarClave);
+      }
+
+      fila.append(pinWrap);
       el.adminPlayers.appendChild(fila);
+    }
+  }
+
+  /*
+   * Asigna (pin = "1234") o borra (pin = null) la clave de un jugador.
+   * Va siempre con el token de administración.
+   */
+  async function guardarClaveJugador(jugador, pin) {
+    const token = el.adminToken ? el.adminToken.value.trim() : '';
+
+    if (pin !== null) {
+      const limpio = String(pin || '').trim();
+      if (!/^[0-9]{4,6}$/.test(limpio)) {
+        showAdminStatus('La clave debe tener de 4 a 6 dígitos.', 'error');
+        return;
+      }
+      pin = limpio;
+    }
+
+    const headers = { 'content-type': 'application/json' };
+    if (token) headers['x-admin-token'] = token;
+
+    try {
+      const res = await fetch('/api/tournament/players/' + encodeURIComponent(jugador.id), {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ pin })
+      });
+
+      let data = null;
+      try {
+        data = await res.json();
+      } catch (error) {
+        data = null;
+      }
+
+      if (res.status === 401) {
+        showAdminStatus('Token incorrecto. Cópialo de Render → Environment → ADMIN_TOKEN.', 'error');
+        return;
+      }
+      if (!data || !data.ok) {
+        showAdminStatus((data && data.error) || 'No se pudo guardar la clave.', 'error');
+        return;
+      }
+
+      showAdminStatus(
+        jugador.nombre + ': clave ' + (pin ? 'guardada.' : 'borrada.'),
+        'ok'
+      );
+      await loadAdminPlayers();
+    } catch (error) {
+      showAdminStatus('Error de red al guardar la clave.', 'error');
+    }
+  }
+
+  /*
+   * Cierra las sesiones abiertas: cambia los tokens de las partidas en curso
+   * para que ninguna sesión antigua pueda seguir moviendo. Cada jugador
+   * vuelve a entrar con su clave; no se pierde ninguna jugada.
+   */
+  /*
+   * Alta de claves: estado de la ventana en la que se pueden registrar claves
+   * nuevas. Cerrada por defecto, para que nadie reclame el nombre de otro.
+   */
+  async function peticionAdmin(url, opciones = {}) {
+    const token = el.adminToken ? el.adminToken.value.trim() : '';
+    const headers = Object.assign({}, opciones.headers || {});
+    if (token) headers['x-admin-token'] = token;
+
+    const res = await fetch(url, Object.assign({}, opciones, { headers }));
+
+    let data = null;
+    try {
+      data = await res.json();
+    } catch (error) {
+      data = null;
+    }
+    return { res, data };
+  }
+
+  function textoRestante(hasta) {
+    const ms = Math.max(0, Date.parse(hasta) - Date.now());
+    const minutos = Math.round(ms / 60000);
+    if (minutos < 60) return minutos + ' min';
+    const horas = Math.floor(minutos / 60);
+    const resto = minutos % 60;
+    return horas + ' h' + (resto ? ' ' + resto + ' min' : '');
+  }
+
+  async function loadEnrollment() {
+    if (!el.adminEnrollmentState) return;
+
+    try {
+      const { res, data } = await peticionAdmin('/api/admin/enrollment');
+
+      if (res.status === 401) {
+        el.adminEnrollmentState.textContent = 'Pega el token para ver el estado.';
+        return;
+      }
+      if (!data || !data.ok) {
+        el.adminEnrollmentState.textContent = 'No se pudo consultar el alta de claves.';
+        return;
+      }
+
+      const faltan = data.sinClave === 0
+        ? 'todos con clave'
+        : data.sinClave + ' de ' + data.jugadores + ' sin clave';
+
+      el.adminEnrollmentState.textContent = data.abierta
+        ? 'Abierta · quedan ' + textoRestante(data.hasta) + ' · ' + faltan
+        : 'Cerrada · ' + faltan;
+
+      el.adminEnrollmentState.classList.toggle('abierta', !!data.abierta);
+    } catch (error) {
+      el.adminEnrollmentState.textContent = 'Error de red al consultar el alta.';
+    }
+  }
+
+  async function setEnrollment(cuerpo, mensaje) {
+    try {
+      const { res, data } = await peticionAdmin('/api/admin/enrollment', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(cuerpo)
+      });
+
+      if (res.status === 401) {
+        showAdminStatus('Token incorrecto. Cópialo de Render → Environment → ADMIN_TOKEN.', 'error');
+        return;
+      }
+      if (!data || !data.ok) {
+        showAdminStatus((data && data.error) || 'No se pudo cambiar el alta de claves.', 'error');
+        return;
+      }
+
+      showAdminStatus(mensaje, 'ok');
+      await loadEnrollment();
+      await loadAdminPlayers();
+    } catch (error) {
+      showAdminStatus('Error de red al cambiar el alta de claves.', 'error');
+    }
+  }
+
+  async function rotateSeats() {
+    if (!window.confirm(
+      '¿Cerrar las sesiones abiertas?\n\n'
+      + 'Cada jugador tendrá que pulsar Entrar otra vez con su clave.\n'
+      + 'No se pierde ninguna jugada ni el plazo de la partida.'
+    )) return;
+
+    const token = el.adminToken ? el.adminToken.value.trim() : '';
+    const headers = { 'content-type': 'application/json' };
+    if (token) headers['x-admin-token'] = token;
+
+    try {
+      const res = await fetch('/api/admin/rotate-seats', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({})
+      });
+
+      let data = null;
+      try {
+        data = await res.json();
+      } catch (error) {
+        data = null;
+      }
+
+      if (res.status === 401) {
+        showAdminStatus('Token incorrecto. Cópialo de Render → Environment → ADMIN_TOKEN.', 'error');
+        return;
+      }
+      if (!data || !data.ok) {
+        showAdminStatus((data && data.error) || 'No se pudieron cerrar las sesiones.', 'error');
+        return;
+      }
+
+      showAdminStatus(
+        data.salas
+          ? 'Sesiones cerradas en ' + data.salas + ' partida(s). Que cada jugador entre con su clave.'
+          : 'No hay partidas abiertas que cerrar.',
+        'ok'
+      );
+      await loadEnrollment();
+    } catch (error) {
+      showAdminStatus('Error de red al cerrar las sesiones.', 'error');
     }
   }
 
@@ -1312,12 +1586,36 @@
     el.adminToggleBtn.addEventListener('click', () => {
       const abrir = el.adminPanel.hidden;
       setAdminOpen(abrir);
-      if (abrir) loadAdminPlayers();
+      if (abrir) {
+        loadAdminPlayers();
+        loadEnrollment();
+      }
     });
 
-    el.adminToken.addEventListener('change', () => loadAdminPlayers());
+    el.adminToken.addEventListener('change', () => {
+      loadAdminPlayers();
+      loadEnrollment();
+    });
 
-    if (!el.adminPanel.hidden) loadAdminPlayers();
+    if (el.adminRotateBtn) el.adminRotateBtn.addEventListener('click', rotateSeats);
+
+    if (el.adminEnroll2Btn) {
+      el.adminEnroll2Btn.addEventListener('click', () =>
+        setEnrollment({ abrir: true, horas: 2 }, 'Alta de claves abierta 2 horas.'));
+    }
+    if (el.adminEnroll24Btn) {
+      el.adminEnroll24Btn.addEventListener('click', () =>
+        setEnrollment({ abrir: true, horas: 24 }, 'Alta de claves abierta 24 horas.'));
+    }
+    if (el.adminEnrollCloseBtn) {
+      el.adminEnrollCloseBtn.addEventListener('click', () =>
+        setEnrollment({ abrir: false }, 'Alta de claves cerrada.'));
+    }
+
+    if (!el.adminPanel.hidden) {
+      loadAdminPlayers();
+      loadEnrollment();
+    }
 
     el.adminForm.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -1561,6 +1859,7 @@
   function joinViaCode(code, name) {
     el.codeInput.value = code.toUpperCase();
     el.joinName.value = name;
+    if (el.joinPin) el.joinPin.value = leerPin(name);
     el.joinForm.requestSubmit();
   }
 
@@ -1636,23 +1935,29 @@
     setBusy(true);
     clearLobbyError();
 
+    const pin = el.createPin ? el.createPin.value.trim() : '';
+
     try {
       const res = await fetch('/api/partidas/invitar', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jugador: name, rival, color })
+        body: JSON.stringify({ jugador: name, rival, color, pin })
       });
       const data = await res.json();
       setBusy(false);
 
       if (!data.ok) {
-        showLobbyError(data.error || 'No se pudo crear la sala.');
+        enfocarPin(data.error, name, el.createPin);
+        showLobbyError(ERRORS[data.error] || data.error || 'No se pudo crear la sala.');
         return;
       }
 
+      guardarPin(name, pin);
+
       // Unirse a la sala por socket con el nombre propio
-      const joined = await O.joinRoom(data.room.code, name);
+      const joined = await O.joinRoom(data.room.code, name, pin);
       if (!joined.ok) {
+        enfocarPin(joined.error, name, el.createPin);
         showLobbyError(errorText(joined.error));
         return;
       }
@@ -1683,23 +1988,32 @@
     }
 
     const name = el.joinName.value;
+    if (!name) {
+      showLobbyError('Elige tu nombre para entrar.');
+      return;
+    }
+    const pin = el.joinPin ? el.joinPin.value.trim() : '';
     setBusy(true);
     clearLobbyError();
 
     try {
-      const response = await O.joinRoom(code, name);
+      const response = await O.joinRoom(code, name, pin);
       setBusy(false);
 
       if (!response.ok) {
+        enfocarPin(response.error, name, el.joinPin);
         showLobbyError(errorText(response.error));
         return;
       }
 
+      guardarPin(name, pin);
       myColor = response.color;
       orientation = response.color;
       room = response.room;
       enterGame();
-      showToast(response.resumed ? 'Partida recuperada' : 'Te has unido a la sala');
+      showToast(response.pinGuardado
+        ? 'Clave guardada para ' + name
+        : (response.resumed ? 'Partida recuperada' : 'Te has unido a la sala'));
     } catch (error) {
       setBusy(false);
       showLobbyError('Error de conexión con el servidor.');
@@ -1898,6 +2212,29 @@
     showLobbyError('La sala ya no existe o ha caducado.');
   });
 
+  /*
+   * La sesión guardada ya no vale (por ejemplo tras cerrar las sesiones
+   * abiertas) o el servidor pide la clave: volvemos al lobby con el código y
+   * el nombre puestos para que solo tenga que confirmar.
+   */
+  O.on('pin-required', (payload) => {
+    if (busy) return;
+    room = null;
+    myColor = null;
+    showLobby();
+    updateUrl(null);
+
+    const name = (payload && payload.name) || '';
+    if (payload && payload.code) el.codeInput.value = payload.code;
+    if (name && el.joinName) {
+      el.joinName.value = name;
+      if (el.joinPin) el.joinPin.value = leerPin(name);
+    }
+
+    showLobbyError('Escribe tu clave para volver a la partida.');
+    if (el.joinPin) el.joinPin.focus();
+  });
+
   O.on('left', () => {
     room = null;
     myColor = null;
@@ -1917,6 +2254,7 @@
   el.playerName.addEventListener('change', () => {
     const name = el.playerName.value.trim();
     if (name) O.setName(name);
+    if (el.createPin) el.createPin.value = leerPin(name);
   });
 
   el.rivalName.addEventListener('change', () => {
@@ -1927,6 +2265,7 @@
   el.joinName.addEventListener('change', () => {
     const name = el.joinName.value.trim();
     if (name) O.setName(name);
+    if (el.joinPin) el.joinPin.value = leerPin(name);
   });
 
   el.createBtn.addEventListener('click', handleCreate);

@@ -176,6 +176,59 @@ test('postgres: prórrogas', async () => {
   await store.close();
 });
 
+test('postgres: clave personal (PIN) del jugador', async () => {
+  const { store } = crearStore();
+  await store.initRoster(['Manuel', 'Fernan']);
+
+  // Sin clave al empezar
+  let players = await store.getPlayers();
+  assert.equal(players.every(p => p.pinHash === null), true);
+
+  // El primero que la registra gana...
+  assert.equal(await store.claimPlayerPinHash('manuel', 'hash-1'), true);
+  // ...y el segundo ya no puede.
+  assert.equal(await store.claimPlayerPinHash('manuel', 'hash-2'), false);
+
+  players = await store.getPlayers();
+  assert.equal(players.find(p => p.nombre === 'Manuel').pinHash, 'hash-1');
+
+  // El administrador puede asignar otra...
+  const cambiado = await store.setPlayerPinHash('manuel', 'hash-3');
+  assert.equal(cambiado.pinHash, 'hash-3');
+
+  // ...y borrarla del todo.
+  const borrado = await store.setPlayerPinHash('manuel', null);
+  assert.equal(borrado.pinHash, null);
+  assert.equal(await store.claimPlayerPinHash('manuel', 'hash-4'), true);
+
+  // Un jugador inexistente no rompe.
+  assert.equal(await store.setPlayerPinHash('nadie', 'hash'), null);
+  assert.equal(await store.claimPlayerPinHash('nadie', 'hash'), null);
+
+  await store.close();
+});
+
+test('postgres: ajustes sueltos (ventana de alta de claves)', async () => {
+  const { store } = crearStore();
+
+  assert.equal(await store.getAjuste('alta_claves_hasta'), null);
+
+  const iso = new Date(ahora + 7200000).toISOString();
+  assert.equal(await store.setAjuste('alta_claves_hasta', iso), iso);
+  assert.equal(await store.getAjuste('alta_claves_hasta'), iso);
+
+  // Actualizar el mismo ajuste no duplica.
+  const otro = new Date(ahora + 3600000).toISOString();
+  assert.equal(await store.setAjuste('alta_claves_hasta', otro), otro);
+  assert.equal(await store.getAjuste('alta_claves_hasta'), otro);
+
+  // Borrarlo lo deja vacío.
+  assert.equal(await store.setAjuste('alta_claves_hasta', null), null);
+  assert.equal(await store.getAjuste('alta_claves_hasta'), null);
+
+  await store.close();
+});
+
 test('postgres: cola de notificaciones con reintentos', async () => {
   const { store } = crearStore();
 

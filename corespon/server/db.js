@@ -28,10 +28,13 @@ const SCHEMA = [
      activa BOOLEAN NOT NULL DEFAULT TRUE,
      admin BOOLEAN NOT NULL DEFAULT FALSE,
      whatsapp TEXT,
+     pin_hash TEXT,
      creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
    )`,
 
   `ALTER TABLE corespon_players ADD COLUMN IF NOT EXISTS admin BOOLEAN NOT NULL DEFAULT FALSE`,
+
+  `ALTER TABLE corespon_players ADD COLUMN IF NOT EXISTS pin_hash TEXT`,
 
   `CREATE TABLE IF NOT EXISTS corespon_partidas (
      room_code TEXT PRIMARY KEY,
@@ -53,6 +56,15 @@ const SCHEMA = [
   // Estado completo de la sala (tablero, historial, plazos, tokens) para poder
   // restaurar una partida tras un reinicio del servidor.
   `ALTER TABLE corespon_partidas ADD COLUMN IF NOT EXISTS snapshot JSONB`,
+
+  // Ajustes sueltos del torneo (por ejemplo, hasta cuándo está abierta el alta
+  // de claves personales). Se guardan como texto para no crear una columna por
+  // cada ajuste futuro.
+  `CREATE TABLE IF NOT EXISTS corespon_ajustes (
+     clave TEXT PRIMARY KEY,
+     valor TEXT,
+     actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
 
   `CREATE TABLE IF NOT EXISTS corespon_prorrogas (
      id BIGSERIAL PRIMARY KEY,
@@ -121,6 +133,7 @@ function emptyPlayer(record) {
     activa: !!record.activa,
     admin: !!record.admin,
     whatsapp: record.whatsapp || null,
+    pinHash: record.pinHash || record.pin_hash || null,
     creadoEn: iso(record.creadoEn || record.creado_en)
   };
 }
@@ -194,6 +207,7 @@ function createMemoryStore() {
   const players = new Map();
   const partidas = new Map();
   const prorrogas = [];
+  const ajustes = new Map();
   const notificaciones = [];
   const resultados = [];
   let notificacionSeq = 0;
@@ -243,6 +257,35 @@ function createMemoryStore() {
       if (!player) return null;
       player.activa = !!activa;
       return player;
+    },
+
+    // --- Clave personal (PIN) ---
+    async setPlayerPinHash(id, hash) {
+      const player = players.get(id);
+      if (!player) return null;
+      player.pinHash = hash || null;
+      return player;
+    },
+
+    // Registra la clave solo si el jugador aún no tiene: gana el primero.
+    async claimPlayerPinHash(id, hash) {
+      const player = players.get(id);
+      if (!player) return null;
+      if (player.pinHash) return false;
+      player.pinHash = hash;
+      return true;
+    },
+
+    // --- Ajustes ---
+    async getAjuste(clave) {
+      const valor = ajustes.get(clave);
+      return valor === undefined ? null : valor;
+    },
+
+    async setAjuste(clave, valor) {
+      if (valor === null || valor === undefined) ajustes.delete(clave);
+      else ajustes.set(clave, String(valor));
+      return valor === null || valor === undefined ? null : String(valor);
     },
 
     // --- Partidas ---
@@ -456,7 +499,8 @@ function createPostgresStore(connectionString, options = {}) {
     async getPlayers() {
       await init();
       const { rows } = await pool.query(
-        `SELECT id, nombre, activa, admin, whatsapp, creado_en FROM corespon_players ORDER BY nombre`
+        `SELECT id, nombre, activa, admin, whatsapp, pin_hash, creado_en
+           FROM corespon_players ORDER BY nombre`
       );
       return rows.map(emptyPlayer);
     },
@@ -468,7 +512,7 @@ function createPostgresStore(connectionString, options = {}) {
          VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (id) DO UPDATE SET nombre = EXCLUDED.nombre, activa = EXCLUDED.activa,
            admin = (corespon_players.admin OR EXCLUDED.admin), whatsapp = EXCLUDED.whatsapp
-         RETURNING id, nombre, activa, admin, whatsapp, creado_en`,
+         RETURNING id, nombre, activa, admin, whatsapp, pin_hash, creado_en`,
         [player.id, player.nombre, player.activa, !!player.admin, player.whatsapp || null]
       );
       return emptyPlayer(rows[0]);
@@ -479,7 +523,7 @@ function createPostgresStore(connectionString, options = {}) {
       if (updates.whatsapp !== undefined) {
         const { rows } = await pool.query(
           `UPDATE corespon_players SET whatsapp = $2, nombre = COALESCE(nombre, $3)
-           WHERE id = $1 RETURNING id, nombre, activa, admin, whatsapp, creado_en`,
+           WHERE id = $1 RETURNING id, nombre, activa, admin, whatsapp, pin_hash, creado_en`,
           [id, updates.whatsapp, updates.nombre]
         );
         return rows.length ? emptyPlayer(rows[0]) : null;
@@ -491,10 +535,59 @@ function createPostgresStore(connectionString, options = {}) {
       await init();
       const { rows } = await pool.query(
         `UPDATE corespon_players SET activa = $2
-         WHERE id = $1 RETURNING id, nombre, activa, admin, whatsapp, creado_en`,
+         WHERE id = $1 RETURNING id, nombre, activa, admin, whatsapp, pin_hash, creado_en`,
         [id, !!activa]
       );
       return rows.length ? emptyPlayer(rows[0]) : null;
+    },
+
+    async setPlayerPinHash(id, hash) {
+      await init();
+      const { rows } = await pool.query(
+        `UPDATE corespon_players SET pin_hash = $2
+         WHERE id = $1 RETURNING id, nombre, activa, admin, whatsapp, pin_hash, creado_en`,
+        [id, hash || null]
+      );
+      return rows.length ? emptyPlayer(rows[0]) : null;
+    },
+
+    async claimPlayerPinHash(id, hash) {
+      await init();
+      const { rows } = await pool.query(
+        `UPDATE corespon_players SET pin_hash = $2
+         WHERE id = $1 AND pin_hash IS NULL RETURNING id`,
+        [id, hash]
+      );
+      if (rows.length) return true;
+
+      const existe = await pool.query('SELECT 1 FROM corespon_players WHERE id = $1', [id]);
+      return existe.rows.length ? false : null;
+    },
+
+    // --- Ajustes ---
+    async getAjuste(clave) {
+      await init();
+      const { rows } = await pool.query(
+        'SELECT valor FROM corespon_ajustes WHERE clave = $1',
+        [clave]
+      );
+      return rows.length ? rows[0].valor : null;
+    },
+
+    async setAjuste(clave, valor) {
+      await init();
+      if (valor === null || valor === undefined) {
+        await pool.query('DELETE FROM corespon_ajustes WHERE clave = $1', [clave]);
+        return null;
+      }
+      const { rows } = await pool.query(
+        `INSERT INTO corespon_ajustes (clave, valor, actualizado_en)
+         VALUES ($1, $2, now())
+         ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado_en = now()
+         RETURNING valor`,
+        [clave, String(valor)]
+      );
+      return rows[0].valor;
     },
 
     async initRoster(names, adminNames = []) {

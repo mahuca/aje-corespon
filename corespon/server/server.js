@@ -212,6 +212,16 @@ function createServer(options = {}) {
         return res.status(400).json({ ok: false, error: 'Un jugador no puede jugar contra sí mismo' });
       }
 
+      // Quien crea la partida tiene que identificarse con su clave personal:
+      // así nadie puede abrir una partida en nombre de otro.
+      const solicitante = jugador || blancas;
+      const pin = await verificarPinJugador(solicitante, req.body.pin);
+      if (!pin.ok) {
+        const status = pin.error === 'rate_limited' ? 429
+          : pin.error === 'pin_invalido' ? 400 : 401;
+        return res.status(status).json({ ok: false, error: pin.error });
+      }
+
       // Color del creador (el que hace la petición).
       const colorCreador = color;
 
@@ -236,7 +246,6 @@ function createServer(options = {}) {
       }
 
       // Verificar que no haya partida abierta entre ellos, en cualquier orden
-      const solicitante = jugador || blancas;
       const abiertas = await store.getPartidasAbiertas();
       const existente = abiertas.find(p =>
         (sameName(p.blancas, blancas) && sameName(p.negras, negras)) ||
@@ -305,6 +314,16 @@ function createServer(options = {}) {
       // El asiento ya está ocupado por otro socket (no es este cliente)
       if (player.connected && !isReconnect) {
         return respond({ ok: false, error: 'seat_taken' });
+      }
+
+      // Identidad: reconectar con el token del asiento prueba que ya eras tú.
+      // Si no, hay que escribir la clave personal del jugador, que evita que
+      // cualquiera entre con el nombre de otro y mueva por él.
+      let pinGuardado = false;
+      if (!isReconnect) {
+        const pin = await verificarPinJugador(data.name, data.pin);
+        if (!pin.ok) return respond({ ok: false, error: pin.error });
+        pinGuardado = pin.guardada;
       }
 
       // Si este socket estaba en otra sala, desconecta aquel asiento sin
@@ -379,7 +398,8 @@ function createServer(options = {}) {
         room: room.toPublic(),
         color,
         token: player.token,
-        resumed: isReconnect
+        resumed: isReconnect,
+        pinGuardado
       });
     });
 
@@ -839,6 +859,129 @@ function createServer(options = {}) {
   }
 
   /*
+   * --- Claves personales (PIN) ---
+   *
+   * Cada jugador demuestra quién es con una clave de 4 a 6 dígitos. Se guarda
+   * hasheada (nunca en claro) y no se devuelve por la API. La primera vez que
+   * alguien entra con un nombre sin clave, la que escriba queda registrada;
+   * el administrador puede asignarla o borrarla desde el panel.
+   */
+  const PIN_PEPPER = process.env.PIN_PEPPER || 'aje-corespon-pin-v1';
+  const PIN_MAX_FALLOS = 5;
+  const PIN_VENTANA_MS = 10 * 60 * 1000;
+  const pinFallos = new Map();
+
+  /*
+   * Alta de claves: solo se pueden registrar claves nuevas mientras está
+   * abierta. Por defecto cerrada, para que nadie reclame el nombre de otro.
+   * El momento de cierre se guarda en la base de datos y sobrevive a los
+   * reinicios.
+   */
+  const ALTA_CLAVES_KEY = 'alta_claves_hasta';
+
+  async function altaClavesHasta() {
+    const valor = await store.getAjuste(ALTA_CLAVES_KEY);
+    const hasta = valor ? Date.parse(valor) : NaN;
+    return Number.isFinite(hasta) ? hasta : null;
+  }
+
+  async function altaClavesAbierta(now = Date.now()) {
+    const hasta = await altaClavesHasta();
+    return hasta !== null && hasta > now;
+  }
+
+  async function abrirAltaClaves(horas) {
+    const horasNum = Number.isFinite(horas) && horas > 0 ? horas : 0;
+    const hasta = Date.now() + horasNum * 60 * 60 * 1000;
+    const iso = new Date(hasta).toISOString();
+    await store.setAjuste(ALTA_CLAVES_KEY, iso);
+    return { hasta, iso };
+  }
+
+  async function cerrarAltaClaves() {
+    await store.setAjuste(ALTA_CLAVES_KEY, null);
+    return { hasta: null, iso: null };
+  }
+
+  function hashPin(nombre, pin) {
+    return crypto.createHash('sha256')
+      .update(String(nombre).trim().toLowerCase() + ':' + String(pin).trim() + ':' + PIN_PEPPER)
+      .digest('hex');
+  }
+
+  function pinValidoFormato(pin) {
+    return typeof pin === 'string' && /^[0-9]{4,6}$/.test(pin.trim());
+  }
+
+  function pinBloqueado(clave) {
+    const registro = pinFallos.get(clave);
+    if (!registro) return false;
+    if (Date.now() - registro.desde > PIN_VENTANA_MS) {
+      pinFallos.delete(clave);
+      return false;
+    }
+    return registro.fallos >= PIN_MAX_FALLOS;
+  }
+
+  function anotarFalloPin(clave) {
+    const registro = pinFallos.get(clave);
+    if (!registro || Date.now() - registro.desde > PIN_VENTANA_MS) {
+      pinFallos.set(clave, { fallos: 1, desde: Date.now() });
+      return;
+    }
+    registro.fallos += 1;
+  }
+
+  /*
+   * Comprueba la clave de un jugador del roster.
+   * Devuelve { ok: true, jugador, guardada } o { ok: false, error }.
+   * `guardada` es true cuando la clave acaba de registrarse (primera vez).
+   */
+  async function verificarPinJugador(nombre, pin) {
+    const jugadores = await store.getPlayers();
+    const jugador = jugadores.find(p => sameName(p.nombre, nombre));
+    if (!jugador) return { ok: false, error: 'not_your_game' };
+
+    const clave = String(jugador.id || jugador.nombre).toLowerCase();
+    if (pinBloqueado(clave)) return { ok: false, error: 'rate_limited' };
+
+    const limpio = typeof pin === 'string' ? pin.trim() : '';
+    if (!limpio) return { ok: false, error: 'pin_requerido' };
+    if (!pinValidoFormato(limpio)) {
+      anotarFalloPin(clave);
+      return { ok: false, error: 'pin_invalido' };
+    }
+
+    const hash = hashPin(jugador.nombre, limpio);
+
+    if (jugador.pinHash) {
+      if (jugador.pinHash !== hash) {
+        anotarFalloPin(clave);
+        return { ok: false, error: 'pin_incorrecto' };
+      }
+      pinFallos.delete(clave);
+      return { ok: true, jugador, guardada: false };
+    }
+
+    // El jugador todavía no tiene clave: solo se puede registrar mientras el
+    // administrador mantiene abierta el alta.
+    if (!(await altaClavesAbierta())) {
+      return { ok: false, error: 'alta_cerrada' };
+    }
+
+    const registrada = await store.claimPlayerPinHash(jugador.id, hash);
+    if (registrada === true) {
+      pinFallos.delete(clave);
+      return { ok: true, jugador, guardada: true };
+    }
+    if (registrada === null) return { ok: false, error: 'not_your_game' };
+
+    // Otro dispositivo se adelantó registrando la clave.
+    anotarFalloPin(clave);
+    return { ok: false, error: 'pin_incorrecto' };
+  }
+
+  /*
    * Listado completo (activos e inactivos) para el panel de administración.
    * Los inactivos conservan su historial, pero no cuentan para el torneo.
    */
@@ -853,7 +996,8 @@ function createServer(options = {}) {
           id: p.id,
           nombre: p.nombre,
           activa: !!p.activa,
-          admin: !!p.admin
+          admin: !!p.admin,
+          tieneClave: !!p.pinHash
         }))
       });
     } catch (error) {
@@ -862,7 +1006,9 @@ function createServer(options = {}) {
   });
 
   /*
-   * Alta/baja de un jugador (PATCH { activa: true|false }).
+   * Alta/baja de un jugador (PATCH { activa: true|false }) y gestión de su
+   * clave personal (PATCH { pin: "1234" } para asignarla, { pin: null } para
+   * borrarla).
    *
    * Dar de baja no borra nada: solo marca `activa = false`, así que el
    * jugador sale del torneo pero conserva sus partidas y su historial.
@@ -873,14 +1019,40 @@ function createServer(options = {}) {
       if (!esAdmin(req)) return res.status(401).json({ ok: false, error: 'No autorizado' });
 
       const body = req.body || {};
-      if (typeof body.activa !== 'boolean') {
-        return res.status(400).json({ ok: false, error: 'Indica activa: true o false' });
-      }
 
       const jugadores = await store.getPlayers();
       const jugador = jugadores.find(p => p.id === req.params.id);
       if (!jugador) {
         return res.status(404).json({ ok: false, error: 'Jugador no encontrado' });
+      }
+
+      // Clave personal (PIN): el administrador la asigna o la borra. Nunca
+      // se devuelve: solo si el jugador tiene una puesta.
+      if (body.pin !== undefined) {
+        const texto = body.pin === null ? '' : String(body.pin).trim();
+        if (body.pin !== null && !pinValidoFormato(texto)) {
+          return res.status(400).json({
+            ok: false,
+            error: 'La clave debe tener de 4 a 6 dígitos'
+          });
+        }
+
+        const hash = body.pin === null ? null : hashPin(jugador.nombre, texto);
+        await store.setPlayerPinHash(jugador.id, hash);
+
+        return res.json({
+          ok: true,
+          jugador: {
+            id: jugador.id,
+            nombre: jugador.nombre,
+            activa: !!jugador.activa,
+            tieneClave: !!hash
+          }
+        });
+      }
+
+      if (typeof body.activa !== 'boolean') {
+        return res.status(400).json({ ok: false, error: 'Indica activa: true o false' });
       }
 
       if (!body.activa) {
@@ -907,9 +1079,114 @@ function createServer(options = {}) {
         jugador: {
           id: jugador.id,
           nombre: jugador.nombre,
-          activa: !!body.activa
+          activa: !!body.activa,
+          tieneClave: !!jugador.pinHash
         },
         torneo: resumenTorneo(activos, jugadas)
+      });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  /*
+   * Cierra las sesiones abiertas: cambia los tokens de asiento de todas las
+   * partidas en curso (o de una sola con { roomCode }).
+   *
+   * Se usa una vez al activar las claves personales: así ninguna sesión
+   * antigua —por ejemplo una abierta con el nombre de otro jugador— puede
+   * seguir moviendo. No se pierde nada: state, history, plazos y timing
+   * quedan exactamente igual y la partida continúa donde estaba.
+   */
+  app.post('/api/admin/rotate-seats', async (req, res) => {
+    try {
+      if (!esAdmin(req)) return res.status(401).json({ ok: false, error: 'No autorizado' });
+
+      const pedido = req.body && req.body.roomCode ? normalizeCode(req.body.roomCode) : null;
+      const abiertas = await store.getPartidasAbiertas();
+      const objetivo = pedido ? abiertas.filter(p => p.roomCode === pedido) : abiertas;
+
+      const rotadas = [];
+      for (const partida of objetivo) {
+        const room = rooms.getRoom(partida.roomCode);
+        if (!room) continue;
+
+        for (const color of ['white', 'black']) {
+          const player = room.players[color];
+          if (!player) continue;
+          if (player.token) tokenMap.delete(player.token);
+          player.token = crypto.randomUUID();
+          player.connected = false;
+          player.socketId = null;
+          tokenMap.set(player.token, room.code);
+        }
+
+        await persistRoom(room);
+        io.in(room.code).disconnectSockets(true);
+        io.to(room.code).emit('corespon:room:update', room.toPublic());
+        rotadas.push(room.code);
+      }
+
+      res.json({ ok: true, salas: rotadas.length, roomCodes: rotadas });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  /*
+   * Estado del alta de claves personales: si está abierta, hasta cuándo, y
+   * cuántos jugadores siguen sin clave.
+   */
+  app.get('/api/admin/enrollment', async (req, res) => {
+    try {
+      if (!esAdmin(req)) return res.status(401).json({ ok: false, error: 'No autorizado' });
+
+      const hasta = await altaClavesHasta();
+      const abierta = hasta !== null && hasta > Date.now();
+      const jugadores = await store.getPlayers();
+
+      res.json({
+        ok: true,
+        abierta,
+        hasta: abierta ? new Date(hasta).toISOString() : null,
+        jugadores: jugadores.length,
+        sinClave: jugadores.filter(p => !p.pinHash).length
+      });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  /*
+   * Abre o cierra el alta de claves. Body: { abrir: true, horas: 2 } para
+   * abrirla, o { abrir: false } para cerrarla de inmediato.
+   */
+  app.post('/api/admin/enrollment', async (req, res) => {
+    try {
+      if (!esAdmin(req)) return res.status(401).json({ ok: false, error: 'No autorizado' });
+
+      const body = req.body || {};
+
+      if (body.abrir === false) {
+        await cerrarAltaClaves();
+      } else {
+        const horas = Number(body.horas);
+        if (!Number.isFinite(horas) || horas <= 0 || horas > 168) {
+          return res.status(400).json({ ok: false, error: 'Indica horas entre 1 y 168' });
+        }
+        await abrirAltaClaves(horas);
+      }
+
+      const hasta = await altaClavesHasta();
+      const abierta = hasta !== null && hasta > Date.now();
+      const jugadores = await store.getPlayers();
+
+      res.json({
+        ok: true,
+        abierta,
+        hasta: abierta ? new Date(hasta).toISOString() : null,
+        jugadores: jugadores.length,
+        sinClave: jugadores.filter(p => !p.pinHash).length
       });
     } catch (error) {
       res.status(500).json({ ok: false, error: error.message });
