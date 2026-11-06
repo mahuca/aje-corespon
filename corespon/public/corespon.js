@@ -1189,6 +1189,37 @@
   }
 
   /*
+   * El lobby tiene dos desplegables de nombre (crear y entrar) porque son dos
+   * formularios, pero son el mismo dato: el que se escribe en uno se copia al
+   * otro. Antes no se hablaban y entrar con el nombre vacío daba un error
+   * incomprensible (not_your_game).
+   */
+  function sincronizarNombre(nombre) {
+    const texto = String(nombre || '');
+    if (el.playerName && el.playerName.value !== texto) el.playerName.value = texto;
+    if (el.joinName && el.joinName.value !== texto) el.joinName.value = texto;
+    if (texto) O.setName(texto);
+
+    // Rellena la clave recordada de ese nombre, pero sin pisar lo que el
+    // jugador acaba de escribir (si no, al enviar se borraría sola).
+    const escrita = (el.joinPin && el.joinPin.value.trim())
+      || (el.createPin && el.createPin.value.trim())
+      || '';
+    if (!escrita) sincronizarPin(leerPin(texto));
+  }
+
+  /*
+   * Nombre con el que se juega: el elegido en cualquiera de los dos
+   * desplegables y, si los dos están vacíos, el recordado en este aparato.
+   */
+  function nombreActual() {
+    const elegido = (el.joinName && el.joinName.value.trim())
+      || (el.playerName && el.playerName.value.trim())
+      || '';
+    return elegido || O.getName() || '';
+  }
+
+  /*
    * Rellena los tres desplegables del lobby conservando lo que ya estaba
    * elegido. La lista llega del servidor, así que un jugador añadido por el
    * administrador aparece sin recargar la página.
@@ -1221,8 +1252,12 @@
       if (anterior && lista.includes(anterior)) node.value = anterior;
     }
 
-    // La clave recordada de cada jugador, sin que tengan que escribirla.
-    sincronizarPin(leerPin(el.playerName.value.trim()) || leerPin(el.joinName.value.trim()));
+    // Los dos desplegables de nombre son el mismo dato: el que tenga valor se
+    // copia al otro, y de paso se rellena la clave recordada de ese nombre.
+    const elegido = (el.playerName && el.playerName.value)
+      || (el.joinName && el.joinName.value)
+      || '';
+    if (elegido) sincronizarNombre(elegido);
   }
 
   async function loadPlayers() {
@@ -1734,7 +1769,7 @@
         boton.dataset.code = p.roomCode;
         boton.textContent = 'Ver partida';
         boton.addEventListener('click', () => {
-          const seleccionado = el.playerName.value;
+          const seleccionado = nombreActual();
           if (p.blancas === seleccionado || p.negras === seleccionado) {
             joinViaCode(p.roomCode, seleccionado);
           } else {
@@ -1879,8 +1914,7 @@
 
   function joinViaCode(code, name) {
     el.codeInput.value = code.toUpperCase();
-    el.joinName.value = name;
-    sincronizarPin(leerPin(name));
+    sincronizarNombre(name);
     el.joinForm.requestSubmit();
   }
 
@@ -1945,7 +1979,7 @@
 
   async function handleCreate() {
     if (busy) return;
-    const name = el.playerName.value;
+    const name = nombreActual();
     const rival = el.rivalName.value;
     const color = el.playerColor.value === 'black' ? 'black' : 'white';
     if (!name || !rival) {
@@ -2012,12 +2046,15 @@
       return;
     }
 
-    const name = el.joinName.value;
+    const name = nombreActual();
     if (!name) {
       showLobbyError('Elige tu nombre para entrar.');
+      if (el.joinName) el.joinName.focus();
       return;
     }
+    // La clave se lee antes de sincronizar el nombre, para no pisarla.
     const pin = pinActual(name);
+    sincronizarNombre(name);
     setBusy(true);
     clearLobbyError();
 
@@ -2262,10 +2299,7 @@
     const error = (payload && payload.error) || 'pin_requerido';
     const name = (payload && payload.name) || '';
     if (payload && payload.code) el.codeInput.value = payload.code;
-    if (name && el.joinName) {
-      el.joinName.value = name;
-      sincronizarPin(leerPin(name));
-    }
+    if (name) sincronizarNombre(name);
 
     showLobbyError(error === 'alta_cerrada'
       ? errorText('alta_cerrada')
@@ -2295,9 +2329,7 @@
   // ==================== EVENTOS DE UI ====================
 
   el.playerName.addEventListener('change', () => {
-    const name = el.playerName.value.trim();
-    if (name) O.setName(name);
-    sincronizarPin(leerPin(name));
+    sincronizarNombre(el.playerName.value.trim());
   });
 
   el.rivalName.addEventListener('change', () => {
@@ -2306,9 +2338,7 @@
   });
 
   el.joinName.addEventListener('change', () => {
-    const name = el.joinName.value.trim();
-    if (name) O.setName(name);
-    sincronizarPin(leerPin(name));
+    sincronizarNombre(el.joinName.value.trim());
   });
 
   // Escribir la clave en cualquiera de los dos campos rellena el otro.

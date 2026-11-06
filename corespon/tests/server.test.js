@@ -1262,6 +1262,10 @@ test('ui: al caducar la sesión el lobby pide la clave sin quedarse a medias', a
   // La clave se escribe en cualquiera de los dos campos: se sincronizan.
   assert.match(js, /function sincronizarPin/);
   assert.match(js, /function pinActual/);
+  // Los dos desplegables de nombre son el mismo dato (antes no se hablaban y
+  // entrar con el nombre vacío daba not_your_game sin explicación).
+  assert.match(js, /function sincronizarNombre/);
+  assert.match(js, /function nombreActual/);
   // Los errores de asiento no deben acabar en el mensaje genérico.
   assert.match(js, /seat_taken:/);
   assert.match(js, /not_your_game:/);
