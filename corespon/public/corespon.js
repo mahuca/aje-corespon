@@ -106,6 +106,11 @@
     resultLeaveBtn: document.getElementById('resultLeaveBtn'),
     rematchNote: document.getElementById('rematchNote'),
     statusText: document.getElementById('statusText'),
+    moveNav: document.getElementById('moveNav'),
+    movePrevBtn: document.getElementById('movePrevBtn'),
+    moveNextBtn: document.getElementById('moveNextBtn'),
+    moveLiveBtn: document.getElementById('moveLiveBtn'),
+    moveViewLabel: document.getElementById('moveViewLabel'),
     moveList: document.getElementById('moveList'),
     toast: document.getElementById('toast'),
     partidasSection: document.getElementById('partidasSection'),
@@ -151,6 +156,10 @@
   let lastDrawOffer = null;
   let clockSkew = 0;
   let clockTimer = null;
+  // null = se está viendo la posición actual; un número = jugadas aplicadas
+  // para reconstruir una posición anterior del historial.
+  let vista = null;
+  let vistaCache = null;
 
   // ==================== AYUDANTES ====================
 
@@ -314,8 +323,88 @@
     pendingPromotion = null;
     movePending = false;
     el.promotionOverlay.hidden = true;
+    vista = null;
     render();
     renderPlazoCard();
+  }
+
+  // ==================== MIRAR JUGADAS ANTERIORES ====================
+
+  /*
+   * La sala solo trae la posición actual; para ver atrás se vuelve a jugar el
+   * historial con el mismo motor, aquí en el navegador. El resultado se guarda
+   * en memoria y solo se rehace cuando llega otra jugada.
+   */
+  function totalJugadas() {
+    return room && room.history ? room.history.length : 0;
+  }
+
+  function estadoEnJugada(numero) {
+    const history = (room && room.history) || [];
+    if (!vistaCache || vistaCache.codigo !== room.code
+        || vistaCache.largo !== history.length) {
+      const estados = [E.newState()];
+      for (let index = 0; index < history.length; index++) {
+        const anterior = estados[index];
+        const jugada = history[index];
+        const resultado = E.validateAndApply(
+          anterior, jugada.from, jugada.to, jugada.promotion
+        );
+        estados.push(resultado.ok ? resultado.state : anterior);
+      }
+      vistaCache = { codigo: room.code, largo: history.length, estados };
+    }
+    const acotado = Math.max(0, Math.min(numero, history.length));
+    return vistaCache.estados[acotado];
+  }
+
+  // Se está viendo la posición actual (la de verdad, la que se puede jugar).
+  function enVivo() {
+    return vista === null;
+  }
+
+  function estadoVista() {
+    if (!room) return null;
+    return vista === null ? room.state : estadoEnJugada(vista);
+  }
+
+  /*
+   * `numero` es cuántas jugadas se aplican: 0 es la posición inicial y
+   * `total` es la actual. Con null (o al llegar al final) se vuelve al presente.
+   */
+  function fijarVista(numero) {
+    const total = totalJugadas();
+    if (numero === null || total === 0 || numero >= total) {
+      vista = null;
+    } else {
+      vista = Math.max(0, numero);
+    }
+    clearSelection();
+    render();
+  }
+
+  function moverVista(paso) {
+    const total = totalJugadas();
+    if (!total) return;
+    fijarVista((enVivo() ? total : vista) + paso);
+  }
+
+  function renderVista() {
+    if (!room) return;
+    const total = totalJugadas();
+    const revisando = !enVivo();
+
+    el.moveNav.hidden = total === 0;
+    const posicion = revisando ? vista : total;
+    el.movePrevBtn.disabled = posicion <= 0;
+    el.moveNextBtn.disabled = !revisando;
+    el.moveLiveBtn.disabled = !revisando;
+
+    el.moveViewLabel.classList.toggle('revisando', revisando);
+    el.moveViewLabel.textContent = revisando
+      ? 'Viendo la jugada ' + vista + ' de ' + total
+      : 'En vivo · jugada ' + total + ' de ' + total;
+    document.body.classList.toggle('is-reviewing', revisando);
   }
 
   // ==================== TABLERO ====================
@@ -340,10 +429,11 @@
 
   function renderBoard() {
     if (!room) return;
-    const board = room.state.board;
+    const estado = estadoVista();
+    const board = estado.board;
     const flipped = orientation === 'black';
-    const inCheck = E.isInCheck(board, room.state.turn);
-    const king = inCheck ? E.findKing(board, room.state.turn) : null;
+    const inCheck = E.isInCheck(board, estado.turn);
+    const king = inCheck ? E.findKing(board, estado.turn) : null;
 
     for (let dr = 0; dr < 8; dr++) {
       for (let dc = 0; dc < 8; dc++) {
@@ -366,12 +456,10 @@
           square.appendChild(pieceEl);
         }
 
-        if (room.state.lastMove) {
-          const { from, to } = room.state.lastMove;
-          if ((from[0] === row && from[1] === col)
-              || (to[0] === row && to[1] === col)) {
-            square.classList.add('last-move');
-          }
+        if (estado.lastMove) {
+          const { from, to } = estado.lastMove;
+          if (from[0] === row && from[1] === col) square.classList.add('last-move');
+          if (to[0] === row && to[1] === col) square.classList.add('last-move', 'last-move-to');
         }
 
         if (selected && selected.row === row && selected.col === col) {
@@ -639,6 +727,21 @@
     el.statusText.replaceChildren(...parts);
   }
 
+  function crearEntradaMovimiento(jugada, indice) {
+    const boton = document.createElement('button');
+    boton.type = 'button';
+    boton.className = 'move-san';
+    boton.textContent = jugada.notation || '';
+    boton.title = 'Ver la posición después de esta jugada';
+    boton.setAttribute('aria-label', 'Jugada ' + (indice + 1) + ': ' + boton.textContent);
+    if (vista !== null && vista === indice + 1) {
+      boton.classList.add('current');
+      boton.setAttribute('aria-current', 'true');
+    }
+    boton.addEventListener('click', () => fijarVista(indice + 1));
+    return boton;
+  }
+
   function renderMoveList() {
     const history = room.history || [];
     el.moveList.replaceChildren();
@@ -660,23 +763,26 @@
       number.textContent = (index / 2 + 1) + '.';
       pair.appendChild(number);
 
-      const move = document.createElement('span');
-      move.className = 'move-san';
-      move.textContent = history[index].notation || E.notationFor(room.state, history[index], {});
-      pair.appendChild(move);
+      pair.appendChild(crearEntradaMovimiento(history[index], index));
 
       if (history[index + 1]) {
-        const move2 = document.createElement('span');
-        move2.className = 'move-san';
-        move2.textContent = history[index + 1].notation || '';
-        pair.appendChild(move2);
+        pair.appendChild(crearEntradaMovimiento(history[index + 1], index + 1));
       }
 
       el.moveList.appendChild(pair);
     }
 
     requestAnimationFrame(() => {
-      el.moveList.scrollLeft = el.moveList.scrollWidth;
+      const actual = el.moveList.querySelector('.move-san.current');
+      if (actual) {
+        // Centra la jugada que se está mirando sin mover el resto de la página.
+        const caja = el.moveList.getBoundingClientRect();
+        const cajaMovimiento = actual.getBoundingClientRect();
+        el.moveList.scrollLeft += (cajaMovimiento.left - caja.left)
+          - (caja.width - cajaMovimiento.width) / 2;
+      } else {
+        el.moveList.scrollLeft = el.moveList.scrollWidth;
+      }
       el.moveList.scrollTop = el.moveList.scrollHeight;
     });
   }
@@ -728,7 +834,9 @@
     el.promotionOverlay.hidden = !pendingPromotion || isSpectator;
 
     const over = room.status.over;
-    el.resultOverlay.hidden = !over;
+    // Si está mirando una jugada anterior, la tarjeta de resultado taparía el
+    // tablero: se aparta hasta volver al presente.
+    el.resultOverlay.hidden = !over || !enVivo();
     el.resultLeaveBtn.textContent = 'Volver a la lista';
 
     if (!over) return;
@@ -760,6 +868,7 @@
     renderPlayers();
     renderStatus();
     renderMoveList();
+    renderVista();
     renderClocks();
     renderOverlays();
     renderPlazoCard();
@@ -855,6 +964,8 @@
 
   function canInteract() {
     if (!room || !myColor) return false;
+    // Mirando una jugada anterior: el tablero es solo de consulta.
+    if (!enVivo()) return false;
     if (room.status.over || pendingPromotion || movePending) return false;
     if (!O.isConnected()) return false;
     if (room.state.turn !== myColor) return false;
@@ -875,6 +986,16 @@
     const row = Number(square.dataset.row);
     const col = Number(square.dataset.col);
     if (!Number.isInteger(row) || !Number.isInteger(col)) return;
+
+    // Si está mirando una jugada anterior, el primer toque devuelve al
+    // presente: así no hay que buscar el botón para poder mover.
+    if (!enVivo()) {
+      fijarVista(null);
+      showToast(isSpectator
+        ? 'Has vuelto a la posición actual'
+        : 'Has vuelto al presente para poder mover');
+      return;
+    }
 
     if (!canInteract()) {
       const piece = room.state.board[row][col];
@@ -2115,6 +2236,7 @@
     await O.leaveRoom({ resign });
     room = null;
     myColor = null;
+    vista = null;
     pendingPromotion = null;
     rematchPending = false;
     movePending = false;
@@ -2172,6 +2294,9 @@
     lastDrawOffer = payload.drawOffer || null;
     room = payload;
 
+    // Si la partida se reinició (revancha) o encogió, la vista vuelve al presente.
+    if (vista !== null && vista >= (payload.history || []).length) vista = null;
+
     if (!myColor && !isSpectator) {
       const session = O.getSession();
       if (session) myColor = session.color;
@@ -2181,6 +2306,7 @@
       rematchPending = false;
       pendingPromotion = null;
       movePending = false;
+      vista = null;
       el.promotionOverlay.hidden = true;
       clearSelection();
       orientation = myColor || orientation;
@@ -2203,6 +2329,7 @@
   O.on('closed', () => {
     room = null;
     myColor = null;
+    vista = null;
     pendingPromotion = null;
     rematchPending = false;
     movePending = false;
@@ -2394,6 +2521,31 @@
   el.leaveBtn.addEventListener('click', () => leaveGame(true, { resign: true }));
   el.resultLeaveBtn.addEventListener('click', () => leaveGame(false, { resign: false }));
   el.cancelPromotionBtn.addEventListener('click', cancelPromotion);
+
+  // Navegar por las jugadas: botones, lista y teclado.
+  el.movePrevBtn.addEventListener('click', () => moverVista(-1));
+  el.moveNextBtn.addEventListener('click', () => moverVista(1));
+  el.moveLiveBtn.addEventListener('click', () => fijarVista(null));
+
+  document.addEventListener('keydown', (event) => {
+    if (el.gameScreen.hidden || !room) return;
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    const destino = event.target;
+    if (destino && destino.closest
+        && destino.closest('input, select, textarea, [contenteditable="true"]')) {
+      return;
+    }
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      moverVista(-1);
+    } else if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      moverVista(1);
+    } else if (event.key === 'Escape' && !enVivo()) {
+      event.preventDefault();
+      fijarVista(null);
+    }
+  });
 
   el.rematchBtn.addEventListener('click', async () => {
     if (rematchPending) return;

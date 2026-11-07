@@ -317,6 +317,17 @@
 
       <div class="game-status">
         <p id="statusText" class="status-text" aria-live="polite">Conectando…</p>
+
+        <div id="moveNav" class="move-nav" hidden>
+          <button id="movePrevBtn" class="move-nav-btn" type="button"
+                  aria-label="Ver la jugada anterior" title="Jugada anterior">‹</button>
+          <span id="moveViewLabel" class="move-view-label" aria-live="polite">En vivo</span>
+          <button id="moveNextBtn" class="move-nav-btn" type="button"
+                  aria-label="Ver la jugada siguiente" title="Jugada siguiente">›</button>
+          <button id="moveLiveBtn" class="move-nav-btn move-nav-live" type="button"
+                  aria-label="Volver al presente" title="Volver al presente">Ahora</button>
+        </div>
+
         <div class="move-list-wrap">
           <div id="moveList" class="move-list" aria-label="Jugadas de la partida"></div>
           <p id="timeSummary" class="time-summary" hidden></p>

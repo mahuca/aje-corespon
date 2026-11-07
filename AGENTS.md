@@ -12,7 +12,7 @@
 | Instalar dependencias | `npm install` |
 | Iniciar servidor (producción) | `npm start` |
 | Modo desarrollo (auto-reload) | `npm run dev` |
-| Ejecutar tests (119 tests) | `npm test` |
+| Ejecutar tests (122 tests) | `npm test` |
 | Crear roster en Postgres | `npm run init-db` |
 | Ver cola de notificaciones (admin) | `curl -H "x-admin-token: $ADMIN_TOKEN" "https://<url>/api/whatsapp/queue"` |
 | Health check | `curl https://<url>/healthz` |
@@ -24,7 +24,7 @@
 - **Servidor:** `server.js` — entrada Node/Express + Socket.IO. Escucha en `PORT=3001`.
 - **Rutas principales:** `corespon/server/server.js` (HTTP + Socket.IO), `corespon/server/rooms.js` (reglas de sala), `corespon/server/db.js` (store), `corespon/server/classification.js` (ranking 1500±25), `corespon/server/whatsapp.js` (notificaciones Telegram).
 - **Cliente:** `corespon/public/` — HTML/JS del tablero (`corespon.html`, `online-core.js`, `corespon.js`).
-- **Tests:** `corespon/tests/server.test.js` — 119 tests de integración (5 del torneo, 7 de administración, 9 de claves y 6 del alta además de los de regresión). Se ejecutan con `cd corespon && node --test tests/*.test.js`.
+- **Tests:** `corespon/tests/server.test.js` — 122 tests de integración (5 del torneo, 7 de administración, 9 de claves, 6 del alta y 1 de la vista de jugadas además de los de regresión). Se ejecutan con `cd corespon && node --test tests/*.test.js`.
 
 ---
 
@@ -70,6 +70,7 @@
 - **Cambio de sala sin rendir**: `server.js` usa `resign:true` para rendir; `resign:false` solo desconecta el asiento.
 - El aviso de turno ahora avisa al jugador que debe mover (no al que se movió). Fix commit `52ef2d4`.
 - La lista de "Partidas abiertas" muestra el nombre de quien mueve con el badge `▶ Nombre` (`.turno-badge`). Se calcula en el cliente desde `turno` (`'white' | 'black'`) que ya devuelve `GET /api/partidas`; sin texto tipo "Le toca a".
+- **Último movimiento y repaso de jugadas**: las dos casillas de la última jugada van en ámbar (`.last-move`; la de destino además con `.last-move-to`). Bajo el tablero están `‹` `›` `Ahora` (`#movePrevBtn`, `#moveNextBtn`, `#moveLiveBtn`) y un cartel (`#moveViewLabel`). Las posiciones anteriores **se reconstruyen en el navegador** con `E.newState()` + `E.validateAndApply()` sobre `room.history` (el servidor solo manda la posición actual); se cachean hasta que llega otra jugada. Mientras se mira atrás: `enVivo()` es `false`, `canInteract()` bloquea el tablero, el borde se pone ámbar y las tarjetas de resultado se apartan. Un toque en el tablero vuelve al presente. Las jugadas de la lista son botones (saltan a esa posición) y el teclado responde con ←, → y Escape.
 
 ### Clave personal (PIN) y alta cerrada
 
@@ -106,7 +107,7 @@
 
 ### Tests
 
-- 119 tests en verde tras todos los fixes (5 del torneo, 7 de administración, 9 de claves y 6 del alta).
+- 122 tests en verde tras todos los fixes (5 del torneo, 7 de administración, 9 de claves, 6 del alta y 1 de la vista de jugadas).
 - Los tests usan `pg-mem` (Postgres en memoria) y un proveedor falso de notificaciones.
 - Para testear contra Neon antes de fiar una migración, conviene tener `DATABASE_URL` puesta.
 - Ejecutar: `cd corespon && node --test tests/*.test.js`.
@@ -133,6 +134,6 @@
 - Servidor: `corespon:leave` con `resign:false` solo desconecta el asiento; solo `resign:true` rinde.
 - Etiquetas: `"<rival> aún no ha entrado"` / `"Rival sin conexión (la partida sigue)"`.
 - Bug del aviso de turno: ahora avisa al jugador que le toca, no al que se movió.
-- 119 tests en verde tras fixes.
+- 122 tests en verde tras fixes.
 
 ---

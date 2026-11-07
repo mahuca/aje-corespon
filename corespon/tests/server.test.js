@@ -1275,6 +1275,30 @@ test('ui: al caducar la sesión el lobby pide la clave sin quedarse a medias', a
   assert.match(core, /'alta_cerrada'/);
 });
 
+test('ui: se puede mirar la jugada anterior y el último movimiento se ve', async (t) => {
+  const { instance, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const html = await fetch(base + '/corespon').then(r => r.text());
+  for (const id of ['moveNav', 'movePrevBtn', 'moveNextBtn', 'moveLiveBtn', 'moveViewLabel']) {
+    assert.match(html, new RegExp('id="' + id + '"'), 'falta #' + id);
+  }
+
+  const js = await fetch(base + '/corespon.js').then(r => r.text());
+  // El tablero se pinta con la posición que se está mirando, no solo con la actual.
+  assert.match(js, /function estadoVista/);
+  assert.match(js, /const estado = estadoVista\(\)/);
+  assert.match(js, /function fijarVista/);
+  assert.match(js, /function crearEntradaMovimiento/);
+  // Mirando una jugada anterior no se puede mover.
+  assert.match(js, /if \(!enVivo\(\)\) return false;/);
+
+  const css = await fetch(base + '/styles.css').then(r => r.text());
+  // El último movimiento ya no es un azul al 30 %: casilla de destino marcada.
+  assert.match(css, /\.square\.last-move\.last-move-to/);
+  assert.match(css, /body\.is-reviewing \.board-shell/);
+});
+
 test('ui: los estáticos se revalidan en cada carga (sin caché de 5 min)', async (t) => {
   const { instance, base } = await boot();
   t.after(() => cleanup(instance));
