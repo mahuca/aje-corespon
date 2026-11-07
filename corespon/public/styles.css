@@ -1253,6 +1253,20 @@ body.is-spectator .square { cursor: default; }
 
 /* ==================== LISTA DE PARTIDAS ==================== */
 .partidas-list { display: flex; flex-direction: column; gap: 10px; }
+
+/* Bloques de la lista: lo tuyo con el turno, lo tuyo esperando y el resto. */
+.partidas-grupo {
+  margin: 4px 0 -2px;
+  padding: 0 2px;
+  color: var(--muted-2);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.partidas-grupo:first-child { margin-top: 0; }
+.partidas-grupo-turno-mio { color: var(--accent); }
+
 .partida-item {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   flex-wrap: wrap; row-gap: 8px;

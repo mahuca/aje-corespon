@@ -1843,6 +1843,56 @@
     });
   }
 
+  /*
+   * La lista se agrupa en tres bloques para que arriba quede siempre lo que
+   * hay que jugar: lo tuyo con el turno, lo tuyo esperando al rival y el resto.
+   * Dentro de cada bloque manda el plazo: primero la que caduca antes.
+   */
+  const BLOQUES_PARTIDAS = [
+    { titulo: 'Te toca mover', clase: 'turno-mio' },
+    { titulo: 'Esperando al rival', clase: 'esperando' },
+    { titulo: 'Otras partidas', clase: 'otras' }
+  ];
+
+  function mismoNombre(a, b) {
+    const limpio = (valor) => String(valor || '').trim().toLowerCase();
+    return !!limpio(a) && limpio(a) === limpio(b);
+  }
+
+  // 0: es tuya y te toca · 1: es tuya y esperas · 2: de otros (o sin nombre)
+  function bloquePartida(partida, miNombre) {
+    if (!miNombre) return 2;
+    if (!mismoNombre(partida.blancas, miNombre)
+        && !mismoNombre(partida.negras, miNombre)) {
+      return 2;
+    }
+    const enTurno = partida.turno === 'white' ? partida.blancas : partida.negras;
+    return mismoNombre(enTurno, miNombre) ? 0 : 1;
+  }
+
+  function plazoPartida(partida) {
+    const ms = Date.parse(partida.plazoHasta || '');
+    return Number.isFinite(ms) ? ms : Number.MAX_SAFE_INTEGER;
+  }
+
+  function ordenarPartidas(partidas, miNombre) {
+    return partidas.slice().sort((a, b) => {
+      const bloque = bloquePartida(a, miNombre) - bloquePartida(b, miNombre);
+      if (bloque !== 0) return bloque;
+      const plazo = plazoPartida(a) - plazoPartida(b);
+      if (plazo !== 0) return plazo;
+      return String(a.roomCode).localeCompare(String(b.roomCode));
+    });
+  }
+
+  function separadorPartidas(bloque) {
+    const info = BLOQUES_PARTIDAS[bloque];
+    const titulo = document.createElement('p');
+    titulo.className = 'partidas-grupo partidas-grupo-' + info.clase;
+    titulo.textContent = info.titulo;
+    return titulo;
+  }
+
   async function loadPartidasAbiertas() {
     try {
       const res = await fetch('/api/partidas');
@@ -1851,13 +1901,22 @@
         el.partidasList.innerHTML = '<p class="empty">No se pudo cargar la lista.</p>';
         return;
       }
-      const partidas = data.partidas;
+      const miNombre = nombreActual();
+      const partidas = ordenarPartidas(data.partidas, miNombre);
       if (!partidas.length) {
         el.partidasList.innerHTML = '<p class="empty">No hay partidas abiertas en este momento.</p>';
         return;
       }
       el.partidasList.innerHTML = '';
+      let bloqueActual = null;
       for (const p of partidas) {
+        const bloque = bloquePartida(p, miNombre);
+        // Sin nombre elegido no hay bloques que anunciar: todo es "otras".
+        if (bloque !== bloqueActual) {
+          bloqueActual = bloque;
+          if (miNombre || bloque !== 2) el.partidasList.appendChild(separadorPartidas(bloque));
+        }
+
         const item = document.createElement('div');
         item.className = 'partida-item';
 
@@ -1891,7 +1950,7 @@
         boton.textContent = 'Ver partida';
         boton.addEventListener('click', () => {
           const seleccionado = nombreActual();
-          if (p.blancas === seleccionado || p.negras === seleccionado) {
+          if (mismoNombre(p.blancas, seleccionado) || mismoNombre(p.negras, seleccionado)) {
             joinViaCode(p.roomCode, seleccionado);
           } else {
             window.location.href = '/corespon/' + p.roomCode + '?ver=1';
@@ -2457,6 +2516,7 @@
 
   el.playerName.addEventListener('change', () => {
     sincronizarNombre(el.playerName.value.trim());
+    if (el.gameScreen.hidden) loadPartidasAbiertas();
   });
 
   el.rivalName.addEventListener('change', () => {
@@ -2466,6 +2526,7 @@
 
   el.joinName.addEventListener('change', () => {
     sincronizarNombre(el.joinName.value.trim());
+    if (el.gameScreen.hidden) loadPartidasAbiertas();
   });
 
   // Escribir la clave en cualquiera de los dos campos rellena el otro.

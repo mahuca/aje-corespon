@@ -138,6 +138,19 @@ function emptyPlayer(record) {
   };
 }
 
+/*
+ * La lista de partidas abiertas va ordenada por lo que hay que mover antes:
+ * primero la que caduca más pronto. Sin plazo, al final.
+ */
+function plazoEnMs(partida) {
+  const ms = Date.parse((partida && partida.plazoHasta) || '');
+  return Number.isFinite(ms) ? ms : Number.MAX_SAFE_INTEGER;
+}
+
+function porPlazo(a, b) {
+  return plazoEnMs(a) - plazoEnMs(b);
+}
+
 function emptyPartida(record) {
   return {
     roomCode: record.room_code || record.roomCode,
@@ -313,7 +326,8 @@ function createMemoryStore() {
     async getPartidasAbiertas() {
       return Array.from(partidas.values())
         .filter(p => p.estado === 'abierta')
-        .map(emptyPartida);
+        .map(emptyPartida)
+        .sort(porPlazo);
     },
 
     async getPartidasPorJugador(jugador) {
@@ -675,7 +689,8 @@ function createPostgresStore(connectionString, options = {}) {
     async getPartidasAbiertas() {
       await init();
       const { rows } = await pool.query(
-        `SELECT * FROM corespon_partidas WHERE estado = 'abierta' ORDER BY creado_en`
+        `SELECT * FROM corespon_partidas WHERE estado = 'abierta'
+         ORDER BY plazo_hasta`
       );
       return rows.map(emptyPartida);
     },

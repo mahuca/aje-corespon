@@ -831,6 +831,49 @@ test('ui: la lista de partidas pinta el nombre de quien tiene el turno', async (
   assert.match(css, /\.turno-badge/);
 });
 
+test('api: las partidas abiertas van por plazo, la que caduca antes primero', async (t) => {
+  const { instance, port, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  // Una sala y, más tarde, otra: la primera caduca antes.
+  const vieja = (await invite(base, 'Abuelo', 'Fernan')).room.code;
+  await wait(1500);
+  const nueva = (await invite(base, 'Manuel', 'Alberto')).room.code;
+
+  const antes = await fetch(base + '/api/partidas').then(r => r.json());
+  assert.deepEqual(antes.partidas.map(p => p.roomCode), [vieja, nueva]);
+
+  // Al mover en la vieja, su plazo se reinicia: pasa detrás de la nueva.
+  await wait(1500);
+  const white = await connect(port);
+  const black = await connect(port);
+  await request(white, 'corespon:join', { code: vieja, name: 'Abuelo' });
+  await request(black, 'corespon:join', { code: vieja, name: 'Fernan' });
+  const move = await request(white, 'corespon:move', { code: vieja, from: [6, 1], to: [4, 1] });
+  assert.equal(move.ok, true);
+
+  const despues = await fetch(base + '/api/partidas').then(r => r.json());
+  assert.deepEqual(despues.partidas.map(p => p.roomCode), [nueva, vieja]);
+  assert.ok(Date.parse(despues.partidas[0].plazoHasta)
+    <= Date.parse(despues.partidas[1].plazoHasta));
+});
+
+test('ui: la lista agrupa tus partidas arriba y ordena por plazo', async (t) => {
+  const { instance, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const js = await fetch(base + '/corespon.js').then(r => r.text());
+  assert.match(js, /function ordenarPartidas/);
+  assert.match(js, /function bloquePartida/);
+  // Tres bloques: te toca, esperas, otros.
+  assert.match(js, /'Te toca mover'/);
+  assert.match(js, /'Esperando al rival'/);
+  assert.match(js, /'Otras partidas'/);
+
+  const css = await fetch(base + '/styles.css').then(r => r.text());
+  assert.match(css, /\.partidas-grupo-turno-mio/);
+});
+
 test('pin: la primera vez hay que elegir clave y queda registrada', async (t) => {
   const { instance, port, store, base } = await boot();
   t.after(() => cleanup(instance));
