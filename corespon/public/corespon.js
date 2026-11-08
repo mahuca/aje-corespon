@@ -102,9 +102,8 @@
     resultKicker: document.getElementById('resultKicker'),
     resultTitle: document.getElementById('resultTitle'),
     resultText: document.getElementById('resultText'),
-    rematchBtn: document.getElementById('rematchBtn'),
+    resultPlayBtn: document.getElementById('resultPlayBtn'),
     resultLeaveBtn: document.getElementById('resultLeaveBtn'),
-    rematchNote: document.getElementById('rematchNote'),
     statusText: document.getElementById('statusText'),
     moveNav: document.getElementById('moveNav'),
     movePrevBtn: document.getElementById('movePrevBtn'),
@@ -127,6 +126,7 @@
     adminStatus: document.getElementById('adminStatus'),
     adminPlayers: document.getElementById('adminPlayers'),
     adminRotateBtn: document.getElementById('adminRotateBtn'),
+    adminVueltasBtn: document.getElementById('adminVueltasBtn'),
     adminEnrollmentState: document.getElementById('adminEnrollmentState'),
     adminEnroll2Btn: document.getElementById('adminEnroll2Btn'),
     adminEnroll24Btn: document.getElementById('adminEnroll24Btn'),
@@ -149,7 +149,10 @@
   let drag = null;
   let pendingPromotion = null;
   let movePending = false;
-  let rematchPending = false;
+  // Resultado de la partida que acaba de terminar y color de la vuelta que
+  // el servidor ha creado sola. Se usa para enseñar la tarjeta de "partida
+  // de vuelta creada" mientras la sala ya tiene el tablero nuevo.
+  let vueltaInfo = null;
   let busy = false;
   let toastTimer = null;
   let isSpectator = false;
@@ -324,6 +327,7 @@
     movePending = false;
     el.promotionOverlay.hidden = true;
     vista = null;
+    vueltaInfo = null;
     render();
     renderPlazoCard();
   }
@@ -834,12 +838,34 @@
     el.promotionOverlay.hidden = !pendingPromotion || isSpectator;
 
     const over = room.status.over;
+    // La partida terminó y el servidor ya creó la vuelta: la sala está en
+    // juego, pero seguimos enseñando el resultado y el color que toca.
+    const vuelta = !over && !isSpectator ? vueltaInfo : null;
+
     // Si está mirando una jugada anterior, la tarjeta de resultado taparía el
     // tablero: se aparta hasta volver al presente.
-    el.resultOverlay.hidden = !over || !enVivo();
+    el.resultOverlay.hidden = (!over && !vuelta) || !enVivo();
     el.resultLeaveBtn.textContent = 'Volver a la lista';
 
-    if (!over) return;
+    if (!over && !vuelta) return;
+
+    if (vuelta) {
+      const antes = other(vuelta.color);
+      const resultado = !vuelta.status.winner ? 'Tablas'
+        : vuelta.status.winner === antes ? 'Has ganado' : 'Has perdido';
+      const rival = playerName(other(vuelta.color));
+      const color = vuelta.color === 'white' ? 'blancas' : 'negras';
+
+      el.resultKicker.textContent = vuelta.status.reason === 'checkmate'
+        ? 'Jaque mate'
+        : 'Fin de la partida';
+      el.resultTitle.textContent = 'Partida de vuelta creada';
+      el.resultText.textContent = resultado + '. Juegas con ' + color
+        + ' contra ' + rival + '.';
+      el.resultPlayBtn.hidden = false;
+      el.resultPlayBtn.textContent = 'Empezar';
+      return;
+    }
 
     const info = isSpectator
       ? spectatorResult(room.status)
@@ -850,15 +876,9 @@
     el.resultTitle.textContent = info.title;
     el.resultText.textContent = info.text;
 
-    const canRematch = !isSpectator && !!(room.players[opponent] && room.players[myColor]);
-    el.rematchBtn.hidden = !canRematch;
-    el.rematchBtn.disabled = rematchPending;
-    el.rematchBtn.textContent = rematchPending ? 'Esperando…' : 'Revancha';
-
-    let note = '';
-    if (!canRematch) note = 'Tu rival ha salido de la sala.';
-    el.rematchNote.textContent = note;
-    el.rematchNote.hidden = !note;
+    // La vuelta se crea sola: no hay nada que aceptar. Cuando no hay vuelta
+    // (era la segunda partida de la pareja) solo queda volver a la lista.
+    el.resultPlayBtn.hidden = true;
   }
 
   function render() {
@@ -1678,6 +1698,52 @@
     }
   }
 
+  /*
+   * Crea las vueltas que falten de parejas que ya jugaron la ida. El
+   * servidor las crea solas al terminar, así que esto solo hace falta para
+   * las partidas que acabaron antes del cambio.
+   */
+  async function crearVueltasPendientes() {
+    const token = el.adminToken ? el.adminToken.value.trim() : '';
+    const headers = { 'content-type': 'application/json' };
+    if (token) headers['x-admin-token'] = token;
+
+    try {
+      const res = await fetch('/api/admin/vueltas', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({})
+      });
+
+      let data = null;
+      try {
+        data = await res.json();
+      } catch (error) {
+        data = null;
+      }
+
+      if (res.status === 401) {
+        showAdminStatus('Token incorrecto. Cópialo de Render → Environment → ADMIN_TOKEN.', 'error');
+        return;
+      }
+      if (!data || !data.ok) {
+        showAdminStatus((data && data.error) || 'No se pudieron crear las vueltas.', 'error');
+        return;
+      }
+
+      const lista = Array.isArray(data.creadas) ? data.creadas : [];
+      if (!lista.length) {
+        showAdminStatus('No hay vueltas pendientes: todas las parejas activas tienen la vuelta abierta o jugada.', 'ok');
+      } else {
+        const detalle = lista.map(p => p.blancas + '–' + p.negras + ' (' + p.code + ')').join(', ');
+        showAdminStatus('Vueltas creadas: ' + lista.length + '. ' + detalle, 'ok');
+      }
+      loadPartidasAbiertas();
+    } catch (error) {
+      showAdminStatus('Error de red al crear las vueltas.', 'error');
+    }
+  }
+
   async function loadAdminPlayers() {
     if (!el.adminPlayers) return;
 
@@ -1775,6 +1841,7 @@
     });
 
     if (el.adminRotateBtn) el.adminRotateBtn.addEventListener('click', rotateSeats);
+    if (el.adminVueltasBtn) el.adminVueltasBtn.addEventListener('click', crearVueltasPendientes);
 
     if (el.adminEnroll2Btn) {
       el.adminEnroll2Btn.addEventListener('click', () =>
@@ -2297,7 +2364,7 @@
     myColor = null;
     vista = null;
     pendingPromotion = null;
-    rematchPending = false;
+    vueltaInfo = null;
     movePending = false;
     clearSelection();
     showLobby();
@@ -2345,7 +2412,8 @@
 
   O.on('room', (payload) => {
     if (!payload) return;
-    const wasOver = !!(room && room.status.over);
+    const prevStatus = room ? room.status : null;
+    const wasOver = !!(prevStatus && prevStatus.over);
     if (!isSpectator && payload.drawOffer && payload.drawOffer !== myColor
         && payload.drawOffer !== lastDrawOffer) {
       showToast('Tu rival propone tablas');
@@ -2353,7 +2421,8 @@
     lastDrawOffer = payload.drawOffer || null;
     room = payload;
 
-    // Si la partida se reinició (revancha) o encogió, la vista vuelve al presente.
+    // Si la partida se reinició (vuelta automática) o encogió, la vista
+    // vuelve al presente.
     if (vista !== null && vista >= (payload.history || []).length) vista = null;
 
     if (!myColor && !isSpectator) {
@@ -2362,14 +2431,18 @@
     }
 
     if (wasOver && !payload.status.over) {
-      rematchPending = false;
+      // El servidor ha creado la vuelta sola y ya ha cambiado los colores.
+      vueltaInfo = isSpectator ? null : { status: prevStatus, color: myColor };
       pendingPromotion = null;
       movePending = false;
       vista = null;
       el.promotionOverlay.hidden = true;
       clearSelection();
       orientation = myColor || orientation;
-      showToast('¡Nueva partida!');
+      if (vueltaInfo) {
+        showToast('Partida de vuelta · juegas con '
+          + (vueltaInfo.color === 'white' ? 'blancas' : 'negras'));
+      }
     }
 
     if (selected) {
@@ -2390,7 +2463,7 @@
     myColor = null;
     vista = null;
     pendingPromotion = null;
-    rematchPending = false;
+    vueltaInfo = null;
     movePending = false;
     clearSelection();
     O.clearSession();
@@ -2399,7 +2472,7 @@
     showToast('La partida se ha cancelado.');
   });
 
-  // Revancha: el servidor intercambió los colores y nos dice cuál tenemos.
+  // Vuelta: el servidor ha intercambiado los colores y nos dice cuál tenemos.
   O.on('color', (payload) => {
     if (!payload || !payload.color) return;
     myColor = payload.color;
@@ -2416,6 +2489,7 @@
     const previousColor = myColor;
     myColor = payload.color;
     room = payload.room;
+    vueltaInfo = null;
     if (previousColor && previousColor !== payload.color) {
       orientation = payload.color;
       clearSelection();
@@ -2608,19 +2682,10 @@
     }
   });
 
-  el.rematchBtn.addEventListener('click', async () => {
-    if (rematchPending) return;
-    rematchPending = true;
+  // La vuelta se crea sola: este botón solo cierra la tarjeta para jugar.
+  el.resultPlayBtn.addEventListener('click', () => {
+    vueltaInfo = null;
     renderOverlays();
-    const response = await O.rematch();
-    rematchPending = false;
-    if (!response.ok) {
-      showToast(errorText(response.error), 'error');
-      render();
-      return;
-    }
-    if (!response.started) showToast('Revancha solicitada. Esperando al rival…');
-    render();
   });
 
   el.board.addEventListener('pointerdown', onBoardPointerDown);

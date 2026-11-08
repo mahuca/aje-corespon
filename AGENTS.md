@@ -12,7 +12,7 @@
 | Instalar dependencias | `npm install` |
 | Iniciar servidor (producción) | `npm start` |
 | Modo desarrollo (auto-reload) | `npm run dev` |
-| Ejecutar tests (124 tests) | `npm test` |
+| Ejecutar tests (127 tests) | `npm test` |
 | Crear roster en Postgres | `npm run init-db` |
 | Ver cola de notificaciones (admin) | `curl -H "x-admin-token: $ADMIN_TOKEN" "https://<url>/api/whatsapp/queue"` |
 | Health check | `curl https://<url>/healthz` |
@@ -24,7 +24,7 @@
 - **Servidor:** `server.js` — entrada Node/Express + Socket.IO. Escucha en `PORT=3001`.
 - **Rutas principales:** `corespon/server/server.js` (HTTP + Socket.IO), `corespon/server/rooms.js` (reglas de sala), `corespon/server/db.js` (store), `corespon/server/classification.js` (ranking 1500±25), `corespon/server/whatsapp.js` (notificaciones Telegram).
 - **Cliente:** `corespon/public/` — HTML/JS del tablero (`corespon.html`, `online-core.js`, `corespon.js`).
-- **Tests:** `corespon/tests/server.test.js` — 124 tests de integración (5 del torneo, 7 de administración, 9 de claves, 6 del alta, 1 de la vista de jugadas y 2 del orden del listado además de los de regresión). Se ejecutan con `cd corespon && node --test tests/*.test.js`.
+- **Tests:** `corespon/tests/server.test.js` — 127 tests de integración (5 del torneo, 8 de administración, 9 de claves, 6 del alta, 1 de la vista de jugadas, 2 del orden del listado y 4 de la vuelta además de los de regresión). Se ejecutan con `cd corespon && node --test tests/*.test.js`.
 
 ---
 
@@ -56,6 +56,7 @@
 
 ### Flujo de partida
 
+- **Vuelta automática**: cada pareja juega dos partidas. Al terminar la primera (jaque mate, rendición, tiempo o tablas) el servidor reinicia **la misma sala** con los colores cambiados y avisa a cada jugador por pantalla y Telegram. Nadie acepta nada y no hay tercera partida. La lógica está en `crearVuelta()` (`server.js`) y `Room.iniciarVuelta()` (`rooms.js`).
 - **Dos partidas a la vez**: el usuario puede cambiar de partida o volver a la lista **sin rendirse**. El botón `Partidas` regresa al listado; solo `Abandonar` cuenta como derrota.
 - **`Abandonar` = rendición**; `Partidas` = volver a la lista sin rendirse; cerrar pestaña = guardar (sesión persistida).
 - **Plazo de 2 días** empieza cuando **ambos** jugadores han entrado a la sala, no al crear la sala.
@@ -105,10 +106,11 @@
 - El roster de 6 se sigue creando al arrancar, así que el torneo no necesita configuración previa.
 - En el cliente, `loadClasificacion()` pinta el banner `.torneo-info` encima de la tabla; si el endpoint falla, la tabla se ve como siempre.
 - El lobby tiene un panel **⚙️ Administración** (`#adminForm`) para añadir jugadores: pega el `ADMIN_TOKEN` una vez (se guarda en `localStorage`) y escribe el nombre. Los desplegables se rellenan desde `/api/players`, así que el jugador nuevo aparece sin recargar.
+- **`POST /api/admin/vueltas`** (botón "Crear vueltas pendientes") crea la vuelta de parejas que ya jugaron la ida y no la tienen abierta. Es idempotente y salta a los jugadores de baja. Solo hace falta para partidas terminadas antes de la vuelta automática.
 
 ### Tests
 
-- 124 tests en verde tras todos los fixes (5 del torneo, 7 de administración, 9 de claves, 6 del alta, 1 de la vista de jugadas y 2 del orden del listado).
+- 127 tests en verde tras todos los fixes (5 del torneo, 8 de administración, 9 de claves, 6 del alta, 1 de la vista de jugadas, 2 del orden del listado y 4 de la vuelta).
 - Los tests usan `pg-mem` (Postgres en memoria) y un proveedor falso de notificaciones.
 - Para testear contra Neon antes de fiar una migración, conviene tener `DATABASE_URL` puesta.
 - Ejecutar: `cd corespon && node --test tests/*.test.js`.
@@ -135,6 +137,6 @@
 - Servidor: `corespon:leave` con `resign:false` solo desconecta el asiento; solo `resign:true` rinde.
 - Etiquetas: `"<rival> aún no ha entrado"` / `"Rival sin conexión (la partida sigue)"`.
 - Bug del aviso de turno: ahora avisa al jugador que le toca, no al que se movió.
-- 124 tests en verde tras fixes.
+- 127 tests en verde tras fixes.
 
 ---

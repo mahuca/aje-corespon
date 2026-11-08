@@ -661,6 +661,10 @@ function createPostgresStore(connectionString, options = {}) {
          ON CONFLICT (room_code) DO UPDATE SET
            fen = EXCLUDED.fen, pgn = EXCLUDED.pgn, snapshot = EXCLUDED.snapshot,
            turno = EXCLUDED.turno,
+           -- La vuelta reutiliza la sala con los colores cambiados: los
+           -- asientos y la fecha de creación también se actualizan.
+           blancas = EXCLUDED.blancas, negras = EXCLUDED.negras,
+           creado_en = EXCLUDED.creado_en,
            estado = EXCLUDED.estado, resultado = EXCLUDED.resultado,
            movida_en = EXCLUDED.movida_en, plazo_hasta = EXCLUDED.plazo_hasta,
            gracia_hasta = EXCLUDED.gracia_hasta, prorrogas = EXCLUDED.prorrogas,

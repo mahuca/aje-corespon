@@ -300,11 +300,6 @@
     return request('corespon:draw:decline', { code, color: session.color });
   }
 
-  async function rematch(code) {
-    if (!session) return { ok: false, error: 'no_session' };
-    return request('corespon:rematch', { code });
-  }
-
   async function watch(code) {
     const normalized = String(code || '').trim().toUpperCase();
     const response = await request('corespon:watch', { code: normalized });
@@ -399,7 +394,6 @@
     sendMove,
     extendRoom,
     resign,
-    rematch,
     offerDraw,
     acceptDraw,
     declineDraw,

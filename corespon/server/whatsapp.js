@@ -61,8 +61,12 @@ const MESSAGES = {
     '☠ *Tiempo agotado*\n\n${jugador} ha perdido por tiempo la partida ${code}.',
 
   fin:
-    '♟ *Partida terminada*\n\n${resultado} en la partida ${code}.${ratingLine}' +
-    '\n\n¿Aceptar revancha?'
+    '♟ *Partida terminada*\n\n${resultado} en la partida ${code}.${ratingLine}',
+
+  vuelta:
+    '♟ *Partida de vuelta, ${jugador}*\n\nJuegas con ${color} contra ${rival} ' +
+    'en la partida ${code}. Se han cambiado los colores y el tablero ya está ' +
+    'listo.\n\nEntra a jugar: ${host}/corespon/${code}'
 };
 
 // ============================ TELEGRAM ============================
@@ -507,6 +511,24 @@ function finMsg(room, host, extra = {}) {
   };
 }
 
+/*
+ * Aviso de la vuelta: cada jugador recibe el color que le toca en la partida
+ * nueva. Se manda después de reiniciar la sala, cuando los colores ya están
+ * intercambiados.
+ */
+function vueltaMsg(room, color, host) {
+  return {
+    tipo: 'vuelta',
+    vars: {
+      jugador: jugadorDe(room, color),
+      rival: rivalDe(room, color),
+      color: color === 'white' ? 'blancas' : 'negras',
+      code: room.code,
+      host
+    }
+  };
+}
+
 module.exports = {
   WhatsAppGateway,
   NotificationGateway: WhatsAppGateway,
@@ -522,10 +544,12 @@ module.exports = {
   PRORROGA: 'prorroga',
   TIEMPO: 'tiempo',
   FIN: 'fin',
+  VUELTA: 'vuelta',
   invitacionMsg,
   turnoMsg,
   recordatorioMsg,
   prorrogaMsg,
   tiempoMsg,
-  finMsg
+  finMsg,
+  vueltaMsg
 };

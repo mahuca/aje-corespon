@@ -1,7 +1,7 @@
 # Aje-Corespon ♟
 
 Ajedrez por correspondencia para un grupo fijo de jugadores: partidas 1v1 con
-plazos de días, prórrogas, revancha, clasificación y avisos por Telegram.
+plazos de días, prórrogas, vuelta automática, clasificación y avisos por Telegram.
 
 ## Características
 
@@ -10,7 +10,7 @@ plazos de días, prórrogas, revancha, clasificación y avisos por Telegram.
 - Plazo de **2 días por jugada**, con prórroga y margen de gracia.
 - Persistencia en **PostgreSQL** (Neon) o en memoria para desarrollo; las
   partidas abiertas se restauran al reiniciar.
-- **Revancha** en la misma sala con intercambio de colores.
+- **Vuelta automática**: al terminar la primera partida de una pareja, la sala arranca sola con los colores cambiados. No hay que aceptar revancha.
 - **Tablas por acuerdo**: un jugador propone y el otro acepta o rechaza.
 - **Modo espectador** con `/corespon/CODE?ver=1`.
 - **Varias partidas a la vez**: el botón **Partidas** vuelve a la lista sin

@@ -33,7 +33,7 @@
           <li><span aria-hidden="true">♟</span> Plazos de días</li>
           <li><span aria-hidden="true">⏰</span> WhatsApp</li>
           <li><span aria-hidden="true">♞</span> Sin registro</li>
-          <li><span aria-hidden="true">♚</span> Revanchas</li>
+          <li><span aria-hidden="true">♚</span> Vuelta automática</li>
         </ul>
         <p class="hero-link">
           ¿Quieres un juego rápido? <a href="/">Juega 1v1 en tiempo real →</a>
@@ -174,6 +174,17 @@
             </div>
 
             <div class="admin-roster-actions">
+              <button id="adminVueltasBtn" class="btn btn-ghost btn-sm" type="button">
+                Crear vueltas pendientes
+              </button>
+              <p class="hint">
+                Crea la partida de vuelta de las parejas que ya jugaron la ida
+                y no tienen la vuelta abierta. No duplica nada ni toca a los
+                jugadores de baja.
+              </p>
+            </div>
+
+            <div class="admin-roster-actions">
               <h3>Alta de claves</h3>
               <p id="adminEnrollmentState" class="admin-enrollment" aria-live="polite">
                 Pega el token para ver el estado.
@@ -296,10 +307,9 @@
               <h2 id="resultTitle">Jaque mate</h2>
               <p id="resultText"></p>
               <div class="result-actions">
-                <button id="rematchBtn" class="btn btn-primary" type="button">Revancha</button>
+                <button id="resultPlayBtn" class="btn btn-primary" type="button" hidden>Empezar</button>
                 <button id="resultLeaveBtn" class="btn btn-ghost" type="button">Salir</button>
               </div>
-              <p id="rematchNote" class="rematch-note" hidden></p>
             </div>
           </div>
         </div>

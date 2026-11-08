@@ -26,8 +26,8 @@ const { RoomManager, Room, normalizeCode, sameName, PLAZO_DEFAULT_MS, GRACIA_DEF
 const { createStore } = require('./db');
 const { computeClassification, RATING_INICIAL } = require('./classification');
 const {
-  WhatsAppGateway, INVITACION, TURNO, RECORDATORIO, PRORROGA, TIEMPO, FIN,
-  invitacionMsg, turnoMsg, recordatorioMsg, prorrogaMsg, tiempoMsg, finMsg
+  WhatsAppGateway, INVITACION, TURNO, RECORDATORIO, PRORROGA, TIEMPO, FIN, VUELTA,
+  invitacionMsg, turnoMsg, recordatorioMsg, prorrogaMsg, tiempoMsg, finMsg, vueltaMsg
 } = require('./whatsapp');
 
 const CLEANUP_INTERVAL_MS = 60 * 1000;
@@ -91,7 +91,10 @@ function createServer(options = {}) {
   // Registrar los jugadores invitados por defecto
   const JUGADORES_POR_DEFECTO = ['Manuel', 'Fernan', 'Alberto', 'Alvaro', 'Alejandro', 'Abuelo'];
   const ADMINISTRADORES = ['Abuelo'];
-  store.initRoster(JUGADORES_POR_DEFECTO, ADMINISTRADORES).catch((error) => {
+  // Se guarda la promesa para esperarla antes de reparar vueltas: la baja de
+  // un jugador decide si se crea o no la partida de vuelta.
+  const rosterListo = store.initRoster(JUGADORES_POR_DEFECTO, ADMINISTRADORES);
+  rosterListo.catch((error) => {
     if (!quiet) console.error('[corespon] Error registrando jugadores:', error.message);
   });
 
@@ -617,41 +620,28 @@ function createServer(options = {}) {
       respond({ ok: true, room: room.toPublic() });
     });
 
-    // Revancha: cuando ambos votan, la sala reinicia con colores cambiados
+    /*
+     * Vuelta del torneo. Ya no depende de votos: se crea sola al terminar la
+     * partida. Este evento se mantiene para clientes con la página cacheada
+     * (y como recuperación de partidas terminadas antes del cambio).
+     */
     socket.on('corespon:rematch', async (data, respond) => {
       const room = rooms.getRoom(normalizeCode(data && data.code));
       if (!room) return respond({ ok: false, error: 'not_found' });
-
-      const ctx = socketContext(socket, room);
-      if (!ctx || !ctx.player.connected) {
-        return respond({ ok: false, error: 'not_in_room' });
-      }
       if (!room.status.over) return respond({ ok: false, error: 'not_finished' });
 
       // Asegurar el resultado de la partida terminada antes de reiniciar.
       await registrarResultado(room);
 
-      const result = room.voteRematch(ctx.color);
-      if (!result.ok) return respond(result);
-
-      if (result.started) {
-        await persistRoom(room);
-
-        // Los colores han cambiado: cada socket recibe el suyo y actualiza su
-        // contexto en el servidor para poder mover en la nueva partida.
-        for (const color of ['white', 'black']) {
-          const player = room.players[color];
-          if (!player.socketId) continue;
-          const target = io.sockets.sockets.get(player.socketId);
-          if (!target) continue;
-          target.data.corespon = { code: room.code, color };
-          target.emit('corespon:color', { code: room.code, color });
-        }
-
-        io.to(room.code).emit('corespon:room:update', room.toPublic());
+      const creada = await crearVuelta(room, baseUrl(socket));
+      if (!creada) {
+        return respond({
+          ok: false,
+          error: room.parentCode || room.vueltaCreada ? 'auto' : 'waiting_player'
+        });
       }
 
-      respond(result);
+      respond({ ok: true, started: true, room: room.toPublic() });
     });
 
     // Reconexión
@@ -1137,6 +1127,78 @@ function createServer(options = {}) {
   });
 
   /*
+   * Crea las vueltas que falten de partidas ya terminadas.
+   *
+   * Solo actúa sobre parejas con exactamente una partida terminada, ninguna
+   * abierta y los dos jugadores activos: crea la sala de vuelta con los
+   * colores cambiados. Es idempotente: al repetirlo no duplica nada.
+   * Se usa en el arranque (autorreparación) y desde el panel de admin.
+   */
+  async function crearVueltasPendientes(host) {
+    const [resultados, abiertas, jugadores] = await Promise.all([
+      store.getResultados(),
+      store.getPartidasAbiertas(),
+      store.getPlayers()
+    ]);
+
+    const activos = new Map(jugadores.map(p => [p.nombre.toLowerCase(), !!p.activa]));
+    const sigueActivo = (nombre) => activos.get(String(nombre).toLowerCase()) !== false;
+
+    // Agrupar los resultados por pareja, sin importar el orden de colores.
+    const parejas = new Map();
+    for (const r of resultados) {
+      const clave = [r.blancas.toLowerCase(), r.negras.toLowerCase()].sort().join('|');
+      if (!parejas.has(clave)) parejas.set(clave, []);
+      parejas.get(clave).push(r);
+    }
+
+    const creadas = [];
+
+    for (const lista of parejas.values()) {
+      // Las dos partidas ya jugadas: no falta nada.
+      if (lista.length !== 1) continue;
+
+      const terminada = lista[0];
+      const blancasIda = terminada.blancas;
+      const negrasIda = terminada.negras;
+      if (!sigueActivo(blancasIda) || !sigueActivo(negrasIda)) continue;
+
+      // Si ya hay una sala abierta de la pareja, la vuelta está en marcha.
+      const hayAbierta = abiertas.some(p =>
+        (sameName(p.blancas, blancasIda) && sameName(p.negras, negrasIda))
+        || (sameName(p.blancas, negrasIda) && sameName(p.negras, blancasIda)));
+      if (hayAbierta) continue;
+
+      // Vuelta: los mismos jugadores con los colores cambiados.
+      const room = rooms.createRoom(negrasIda, blancasIda);
+      await persistRoom(room);
+
+      for (const color of ['white', 'black']) {
+        gateway.enqueue(room.code, VUELTA, room.players[color],
+          vueltaMsg(room, color, host), host);
+      }
+
+      creadas.push({
+        code: room.code,
+        blancas: room.players.white.name,
+        negras: room.players.black.name
+      });
+    }
+
+    return creadas;
+  }
+
+  app.post('/api/admin/vueltas', async (req, res) => {
+    try {
+      if (!esAdmin(req)) return res.status(401).json({ ok: false, error: 'No autorizado' });
+      const creadas = await crearVueltasPendientes(baseUrl(req));
+      res.json({ ok: true, creadas, total: creadas.length });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  /*
    * Estado del alta de claves personales: si está abierta, hasta cuándo, y
    * cuántos jugadores siguen sin clave.
    */
@@ -1315,9 +1377,87 @@ function createServer(options = {}) {
   }
 
   /*
-   * Guarda el resultado definitivo de la partida, una sola vez.
-   * Las revanchas reinician la sala, así que cada partida produce su fila.
+   * Avisa a cada asiento del color que le toca tras el intercambio y publica
+   * la sala nueva. Los sockets siguen siendo los mismos: solo cambia su
+   * contexto en el servidor, así que el jugador conserva la sesión.
    */
+  function emitirVuelta(room) {
+    for (const color of ['white', 'black']) {
+      const player = room.players[color];
+      if (!player || !player.socketId) continue;
+      const target = io.sockets.sockets.get(player.socketId);
+      if (!target) continue;
+      target.data.corespon = { code: room.code, color };
+      target.emit('corespon:color', { code: room.code, color });
+    }
+    io.to(room.code).emit('corespon:room:update', room.toPublic());
+  }
+
+  /*
+   * Vuelta del torneo, automática.
+   *
+   * Cada pareja juega dos partidas. Al terminar la primera, la misma sala
+   * arranca de nuevo con los colores cambiados: nadie tiene que aceptar una
+   * revancha. La segunda partida no genera una tercera.
+   *
+   * Solo se crea si la pareja tiene exactamente una partida terminada y
+   * ninguna abierta, y si los dos jugadores siguen activos en el torneo.
+   */
+  async function crearVuelta(room, host) {
+    if (!room || !room.status.over || room.vueltaCreada) return false;
+    if (!room.players.white || !room.players.black) return false;
+
+    const blancas = room.players.white.name;
+    const negras = room.players.black.name;
+    if (!blancas || !negras) return false;
+
+    // Reservado antes de la primera espera: si dos finales coinciden
+    // (rendición y plazo, por ejemplo) solo uno crea la vuelta.
+    room.vueltaCreada = true;
+
+    try {
+      const [resultados, abiertas, jugadores] = await Promise.all([
+        store.getResultados(),
+        store.getPartidasAbiertas(),
+        store.getPlayers()
+      ]);
+
+      const activos = new Map(jugadores.map(p => [p.nombre.toLowerCase(), !!p.activa]));
+      const sigueActivo = (nombre) => activos.get(String(nombre).toLowerCase()) !== false;
+      if (!sigueActivo(blancas) || !sigueActivo(negras)) return false;
+
+      const esPareja = (a, b) => (sameName(a, blancas) && sameName(b, negras))
+        || (sameName(a, negras) && sameName(b, blancas));
+
+      // Dos partidas por pareja: la vuelta solo se crea tras la primera.
+      const jugadas = resultados.filter(r => esPareja(r.blancas, r.negras)).length;
+      if (jugadas !== 1) return false;
+
+      // Si ya hay otra sala abierta de la pareja, su vuelta está en marcha.
+      const hayOtra = abiertas.some(p => p.roomCode !== room.code
+        && esPareja(p.blancas, p.negras));
+      if (hayOtra) return false;
+
+      const iniciada = room.iniciarVuelta();
+      if (!iniciada.ok) return false;
+
+      await persistRoom(room);
+      emitirVuelta(room);
+
+      for (const color of ['white', 'black']) {
+        gateway.enqueue(room.code, VUELTA, room.players[color],
+          vueltaMsg(room, color, host), host);
+      }
+      return true;
+    } catch (error) {
+      room.vueltaCreada = false;
+      if (!quiet) {
+        console.error('[corespon] No se pudo crear la vuelta', room.code + ':', error.message);
+      }
+      return false;
+    }
+  }
+
   /*
    * Aviso de fin para los dos asientos, con el rating ya actualizado.
    * Debe llamarse después de persistRoom(): ahí se guarda el resultado.
@@ -1348,8 +1488,15 @@ function createServer(options = {}) {
     const mensaje = finMsg(room, host, { ratings });
     gateway.enqueue(room.code, FIN, room.players.white, mensaje, host);
     gateway.enqueue(room.code, FIN, room.players.black, mensaje, host);
+
+    // La vuelta del torneo se crea sola: nadie tiene que aceptar nada.
+    await crearVuelta(room, host);
   }
 
+  /*
+   * Guarda el resultado definitivo de la partida, una sola vez.
+   * Cada partida (ida y vuelta) produce su propia fila.
+   */
   async function registrarResultado(room) {
     if (!room.status.over || room.resultadoGuardado) return null;
     room.resultadoGuardado = true;
@@ -1430,6 +1577,16 @@ function createServer(options = {}) {
       const skipped = abiertas.length - restored.length;
       if (restored.length) log('Partidas restauradas:', restored.length);
       if (skipped > 0) log('Partidas sin snapshot, no restauradas:', skipped);
+
+      // Autorreparación: si una partida terminó sin que se creara su vuelta
+      // (por ejemplo, antes de este cambio o por un reinicio a medias), se
+      // crea ahora. Es idempotente y respeta a los jugadores de baja.
+      await rosterListo.catch(() => {});
+      const creadas = await crearVueltasPendientes(baseUrl());
+      if (creadas.length) {
+        log('Vueltas creadas al arrancar:', creadas.map(p => p.code).join(', '));
+      }
+
       return restored;
     } catch (error) {
       if (!quiet) console.error('[corespon] Error restaurando partidas:', error.message);

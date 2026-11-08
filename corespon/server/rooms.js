@@ -192,6 +192,8 @@ class Room {
     // Evita guardar dos veces el mismo resultado (persistRoom se llama en
     // varias rutas: jugada, rendición, tiempo, desconexión…).
     this.resultadoGuardado = false;
+    // Evita crear dos veces la partida de vuelta de esta misma partida.
+    this.vueltaCreada = false;
 
     // Plazos
     this.plazos = {
@@ -356,21 +358,16 @@ class Room {
   }
 
   /*
-   * Voto de revancha. Cuando ambos jugadores han votado, la misma sala
-   * arranca una partida nueva con los colores intercambiados.
+   * Vuelta del torneo: reinicia la misma sala con los colores intercambiados.
    *
-   * Los objetos de jugador (token, socket) viajan con la persona, así que
-   * tras el intercambio el socket que era blancas pasa a ser negras.
+   * Se llama sola en cuanto termina la primera partida de una pareja (no hay
+   * nada que aceptar). Los objetos de jugador (token, socket) viajan con la
+   * persona, así que tras el intercambio el socket que era blancas pasa a ser
+   * negras y conserva su sesión.
    */
-  voteRematch(color) {
-    if (!this.status.over) return { ok: false, error: 'not_finished' };
+  iniciarVuelta() {
     if (!this.players.white || !this.players.black) {
       return { ok: false, error: 'waiting_player' };
-    }
-
-    this.rematchVotes[color] = true;
-    if (!this.rematchVotes.white || !this.rematchVotes.black) {
-      return { ok: true, started: false, votes: { ...this.rematchVotes } };
     }
 
     const white = this.players.white;
@@ -387,6 +384,7 @@ class Room {
     this.rematchVotes = { white: false, black: false };
     this.drawOffer = null;
     this.resultadoGuardado = false;
+    this.vueltaCreada = true;
     this.parentCode = this.parentCode || this.code;
     this.plazos = {
       plazoMs: PLAZO_DEFAULT_MS,
@@ -402,6 +400,25 @@ class Room {
     this.timing = { white: 0, black: 0, moves: [], partial: 0, runningSince: now };
 
     return { ok: true, started: true };
+  }
+
+  /*
+   * Voto de revancha (formato antiguo). Ya no se usa desde la interfaz: la
+   * vuelta se crea automáticamente al terminar. Se mantiene por si algún
+   * cliente antiguo sigue votando.
+   */
+  voteRematch(color) {
+    if (!this.status.over) return { ok: false, error: 'not_finished' };
+    if (!this.players.white || !this.players.black) {
+      return { ok: false, error: 'waiting_player' };
+    }
+
+    this.rematchVotes[color] = true;
+    if (!this.rematchVotes.white || !this.rematchVotes.black) {
+      return { ok: true, started: false, votes: { ...this.rematchVotes } };
+    }
+
+    return this.iniciarVuelta();
   }
 
   // ---------- persistencia ----------

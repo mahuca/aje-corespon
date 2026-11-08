@@ -117,6 +117,12 @@ test('postgres: partidas, snapshot y borrado', async () => {
   assert.equal(todas.length, 2);
   assert.equal(todas.find(p => p.roomCode === 'ABC234').turno, 'negras');
 
+  // La vuelta reutiliza la sala con los colores cambiados.
+  await store.savePartida(partida({ blancas: 'Fernan', negras: 'Manuel' }));
+  const trasVuelta = await store.getPartidaPorCodigo('ABC234');
+  assert.equal(trasVuelta.blancas, 'Fernan');
+  assert.equal(trasVuelta.negras, 'Manuel');
+
   const deManuel = await store.getPartidasPorJugador('Manuel');
   assert.equal(deManuel.length, 1);
 

@@ -877,12 +877,6 @@ input:focus {
   margin-top: 16px;
 }
 
-.rematch-note {
-  margin: 12px 0 0 !important;
-  color: var(--accent) !important;
-  font-size: 0.76rem !important;
-}
-
 /* ==================== ESTADO ==================== */
 .game-status {
   width: var(--board-size);

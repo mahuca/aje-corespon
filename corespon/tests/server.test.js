@@ -292,7 +292,7 @@ test('api: invitar dos veces devuelve la misma partida abierta', async (t) => {
   assert.equal(second.existing, true);
 });
 
-test('resultados: rendirse guarda el resultado, la clasificación y el estado', async (t) => {
+test('resultados: rendirse guarda el resultado, la clasificación y la vuelta', async (t) => {
   const { instance, store, port, base } = await boot();
   t.after(() => cleanup(instance));
 
@@ -302,19 +302,18 @@ test('resultados: rendirse guarda el resultado, la clasificación y el estado', 
   await request(white, 'corespon:join', { code: room.code, name: 'Manuel' });
   await request(black, 'corespon:join', { code: room.code, name: 'Fernan' });
 
+  const vueltaWhite = nextEvent(white, 'corespon:color');
   const resign = await request(black, 'corespon:resign', { code: room.code });
   assert.equal(resign.ok, true);
   assert.equal(resign.room.status.winner, 'white');
-
-  // Un segundo intento no duplica el resultado
-  const again = await request(black, 'corespon:resign', { code: room.code });
-  assert.equal(again.ok, false);
-  assert.equal(again.error, 'game_over');
 
   const guardados = await store.getPartidasTerminadasPorPareja('Manuel', 'Fernan');
   assert.equal(guardados.length, 1);
   assert.equal(guardados[0].resultado, 'blancas');
   assert.equal(guardados[0].terminoPor, 'renuncia');
+
+  // La vuelta se ha creado sola y sigue en marcha (sala abierta).
+  assert.equal((await vueltaWhite).color, 'black');
 
   const classification = await fetch(base + '/api/classification').then(r => r.json());
   assert.equal(classification.ok, true);
@@ -336,11 +335,12 @@ test('resultados: rendirse guarda el resultado, la clasificación y el estado', 
   const status = await fetch(base + '/api/status').then(r => r.json());
   assert.equal(status.ok, true);
   assert.equal(status.estadisticas.partidasTotales, 1);
-  assert.equal(status.estadisticas.partidasAbiertas, 0);
+  // La vuelta deja la sala abierta hasta que se juegue.
+  assert.equal(status.estadisticas.partidasAbiertas, 1);
 });
 
-test('revancha: con los dos votos se intercambian los colores y se reinicia', async (t) => {
-  const { instance, port, base } = await boot();
+test('vuelta automática: al terminar se intercambian los colores sin votar', async (t) => {
+  const { instance, store, port, base } = await boot();
   t.after(() => cleanup(instance));
 
   const { room } = await invite(base);
@@ -349,18 +349,12 @@ test('revancha: con los dos votos se intercambian los colores y se reinicia', as
   await request(white, 'corespon:join', { code: room.code, name: 'Manuel' });
   await request(black, 'corespon:join', { code: room.code, name: 'Fernan' });
 
-  // Blancas se rinde: gana Fernan y la partida queda cerrada
-  await request(white, 'corespon:resign', { code: room.code });
-
-  const firstVote = await request(white, 'corespon:rematch', { code: room.code });
-  assert.equal(firstVote.ok, true);
-  assert.equal(firstVote.started, false);
-
   const whiteColor = nextEvent(white, 'corespon:color');
   const blackColor = nextEvent(black, 'corespon:color');
-  const secondVote = await request(black, 'corespon:rematch', { code: room.code });
-  assert.equal(secondVote.ok, true);
-  assert.equal(secondVote.started, true);
+
+  // Blancas se rinde: gana Fernan y la partida queda cerrada. Nadie vota
+  // nada: el servidor crea la vuelta en el mismo instante.
+  await request(white, 'corespon:resign', { code: room.code });
 
   // Cada asiento recibe su color nuevo
   assert.equal((await whiteColor).color, 'black');
@@ -372,6 +366,14 @@ test('revancha: con los dos votos se intercambian los colores y se reinicia', as
   assert.equal(live.history.length, 0);
   assert.equal(live.status.over, false);
   assert.equal(live.turnColor(), 'white');
+  assert.equal(live.parentCode, room.code);
+  assert.equal(live.vueltaCreada, true);
+  assert.equal(live.resultadoGuardado, false);
+
+  // El resultado de la ida queda guardado y la vuelta queda abierta.
+  const resultados = await store.getResultados();
+  assert.equal(resultados.length, 1);
+  assert.equal((await store.getPartidasAbiertas()).length, 1);
 
   // El que era blancas ya no puede mover; el que era negras (ahora blancas) sí
   const oldWhite = await request(white, 'corespon:move', {
@@ -387,7 +389,99 @@ test('revancha: con los dos votos se intercambian los colores y se reinicia', as
   assert.equal(newWhite.room.turn, 'black');
 });
 
-test('partida terminada: los jugadores pueden volver a abrirla para ver el resultado', async (t) => {
+test('vuelta automática: la vuelta no genera una tercera partida', async (t) => {
+  const { instance, store, port, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const { room } = await invite(base);
+  const white = await connect(port);
+  const black = await connect(port);
+  await request(white, 'corespon:join', { code: room.code, name: 'Manuel' });
+  await request(black, 'corespon:join', { code: room.code, name: 'Fernan' });
+
+  // Ida: se rinde Manuel (blancas).
+  const primeraVuelta = nextEvent(white, 'corespon:color');
+  await request(white, 'corespon:resign', { code: room.code });
+  await primeraVuelta;
+
+  // Vuelta: ahora Manuel es negras y se rinde otra vez. La pareja ya tiene
+  // sus dos partidas, así que la sala se queda terminada.
+  const fin = await request(black, 'corespon:resign', { code: room.code });
+  assert.equal(fin.ok, true);
+  await wait(80);
+
+  const live = instance.rooms.getRoom(room.code);
+  assert.equal(live.status.over, true);
+  assert.equal(live.vueltaCreada, true);
+
+  const resultados = await store.getResultados();
+  assert.equal(resultados.length, 2);
+  // Solo queda la sala terminada: no hay una tercera abierta.
+  assert.equal((await store.getPartidasAbiertas()).length, 0);
+});
+
+test('admin: crea las vueltas pendientes sin duplicar', async (t) => {
+  const store = createMemoryStore();
+  const { instance, base } = await boot(store);
+  t.after(() => cleanup(instance));
+
+  // Ida terminada de una pareja sin vuelta (datos anteriores al cambio).
+  await store.saveResultado({
+    blancas: 'Manuel',
+    negras: 'Fernan',
+    resultado: 'blancas',
+    terminoPor: 'renuncia',
+    terminadoEn: new Date().toISOString()
+  });
+
+  const primera = await fetch(base + '/api/admin/vueltas', { method: 'POST' })
+    .then(r => r.json());
+  assert.equal(primera.ok, true);
+  assert.equal(primera.total, 1);
+  assert.equal(primera.creadas[0].blancas, 'Fernan');
+  assert.equal(primera.creadas[0].negras, 'Manuel');
+
+  // La sala creada queda abierta y con los colores cambiados.
+  const abiertas = await store.getPartidasAbiertas();
+  assert.equal(abiertas.length, 1);
+  assert.equal(abiertas[0].blancas, 'Fernan');
+  assert.equal(abiertas[0].negras, 'Manuel');
+
+  // Es idempotente: repetirlo no duplica la vuelta.
+  const segunda = await fetch(base + '/api/admin/vueltas', { method: 'POST' })
+    .then(r => r.json());
+  assert.equal(segunda.ok, true);
+  assert.equal(segunda.total, 0);
+  assert.equal((await store.getPartidasAbiertas()).length, 1);
+});
+
+test('arranque: crea sola la vuelta que faltaba y respeta a los jugadores de baja', async (t) => {
+  const store = createMemoryStore();
+  await store.initRoster(['Manuel', 'Fernan', 'Alberto', 'Alvaro', 'Alejandro', 'Abuelo']);
+  await store.setPlayerActiva('alvaro', false);
+
+  // Dos idas terminadas sin vuelta: una de una pareja activa y otra de un
+  // jugador de baja (como quedó el torneo antes del cambio).
+  await store.saveResultado({
+    blancas: 'Manuel', negras: 'Fernan', resultado: 'blancas',
+    terminoPor: 'renuncia', terminadoEn: new Date().toISOString()
+  });
+  await store.saveResultado({
+    blancas: 'Alberto', negras: 'Alvaro', resultado: 'tablas',
+    terminoPor: 'acuerdo', terminadoEn: new Date().toISOString()
+  });
+
+  const { instance } = await boot(store);
+  t.after(() => cleanup(instance));
+
+  // Solo se crea la vuelta de la pareja activa, con los colores cambiados.
+  const abiertas = await store.getPartidasAbiertas();
+  assert.equal(abiertas.length, 1);
+  assert.equal(abiertas[0].blancas, 'Fernan');
+  assert.equal(abiertas[0].negras, 'Manuel');
+});
+
+test('vuelta: al reconectar se entra en la partida de vuelta con el color nuevo', async (t) => {
   const { instance, port, base } = await boot();
   t.after(() => cleanup(instance));
 
@@ -395,7 +489,10 @@ test('partida terminada: los jugadores pueden volver a abrirla para ver el resul
   const white = await connect(port);
   const joined = await request(white, 'corespon:join', { code: room.code, name: 'Manuel' });
   const token = joined.token;
+
+  const vuelta = nextEvent(white, 'corespon:color');
   await request(white, 'corespon:resign', { code: room.code });
+  await vuelta;
 
   white.close();
   await wait(120);
@@ -406,8 +503,11 @@ test('partida terminada: los jugadores pueden volver a abrirla para ver el resul
   });
   assert.equal(reopened.ok, true);
   assert.equal(reopened.resumed, true);
-  assert.equal(reopened.room.status.over, true);
-  assert.equal(reopened.room.status.winner, 'black');
+  // Manuel era blancas y ahora juega negras en la vuelta.
+  assert.equal(reopened.color, 'black');
+  assert.equal(reopened.room.status.over, false);
+  assert.equal(reopened.room.players.white.name, 'Fernan');
+  assert.equal(reopened.room.parentCode, room.code);
 });
 
 test('notificaciones: las jugadas encolan mensajes completos y se envían una vez', async (t) => {
