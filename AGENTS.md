@@ -111,6 +111,8 @@
 ### Tests
 
 - 127 tests en verde tras todos los fixes (5 del torneo, 8 de administración, 9 de claves, 6 del alta, 1 de la vista de jugadas, 2 del orden del listado y 4 de la vuelta).
+
++ **````POST /api/admin/partidas-pendientes````** (botón "Completar partidas pendientes") crea, en un solo clic, tanto la primera partida de las parejas activas que aún no tienen ninguna, como las vueltas de las que ya jugaron la ida. Salta a los jugadores de baja (p. ej. Álvaro). No duplica nada. La vueltas se crearán solas al terminar cada ida.
 - Los tests usan `pg-mem` (Postgres en memoria) y un proveedor falso de notificaciones.
 - Para testear contra Neon antes de fiar una migración, conviene tener `DATABASE_URL` puesta.
 - Ejecutar: `cd corespon && node --test tests/*.test.js`.
