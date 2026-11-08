@@ -7,7 +7,7 @@
 
 const { createServer } = require('./corespon/server/server');
 
-const instance = createServer({ quiet: false });
+const instance = createServer({ quiet: false, completarAlArrancar: true });
 
 instance.start().catch((error) => {
   console.error('[corespon] No se pudo arrancar el servidor:', error.message);

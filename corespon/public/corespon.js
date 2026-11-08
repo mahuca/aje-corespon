@@ -127,6 +127,7 @@
     adminPlayers: document.getElementById('adminPlayers'),
     adminRotateBtn: document.getElementById('adminRotateBtn'),
     adminVueltasBtn: document.getElementById('adminVueltasBtn'),
+    adminPendientesBtn: document.getElementById('adminPendientesBtn'),
     adminEnrollmentState: document.getElementById('adminEnrollmentState'),
     adminEnroll2Btn: document.getElementById('adminEnroll2Btn'),
     adminEnroll24Btn: document.getElementById('adminEnroll24Btn'),
@@ -1841,7 +1842,15 @@
     });
 
     if (el.adminRotateBtn) el.adminRotateBtn.addEventListener('click', rotateSeats);
-    if (el.adminVueltasBtn) el.adminVueltasBtn.addEventListener('click', crearVueltasPendientes);
+    if (el.adminVueltasBtn) el.adminVueltasBtn.addEventListener('click', async () => {
+      await crearVueltasPendientes();
+      await crearPrimerasPendientes();
+      loadPartidasAbiertas();
+    });
+    if (el.adminPendientesBtn) el.adminPendientesBtn.addEventListener('click', async () => {
+      await crearPrimerasPendientes();
+      loadPartidasAbiertas();
+    });
 
     if (el.adminEnroll2Btn) {
       el.adminEnroll2Btn.addEventListener('click', () =>

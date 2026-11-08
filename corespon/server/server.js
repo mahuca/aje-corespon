@@ -1188,6 +1188,64 @@ function createServer(options = {}) {
     return creadas;
   }
 
+  /*
+   * Crea la primera partida de las parejas de jugadores activos que todavía
+   * no tienen ninguna (ni terminada ni abierta). La vuelta se crea sola al
+   * terminar la ida, así que aquí solo hace falta una por pareja.
+   *
+   * Los jugadores de baja se saltan (p. ej. Álvaro): no se les crea nada.
+   * No manda invitaciones: la partida aparece directamente en su listado.
+   */
+  async function crearPrimerasPendientes() {
+    const [resultados, abiertas, jugadores] = await Promise.all([
+      store.getResultados(),
+      store.getPartidasAbiertas(),
+      store.getPlayers()
+    ]);
+
+    const activos = jugadores
+      .filter(p => p.activa)
+      .map(p => p.nombre);
+    const clave = (a, b) => [String(a).toLowerCase(), String(b).toLowerCase()]
+      .sort().join('|');
+
+    // Parejas que ya tienen algo: ida terminada, vuelta o partida en curso.
+    const conHistoria = new Set();
+    for (const r of resultados) conHistoria.add(clave(r.blancas, r.negras));
+    for (const p of abiertas) conHistoria.add(clave(p.blancas, p.negras));
+
+    const creadas = [];
+    for (let i = 0; i < activos.length; i++) {
+      for (let j = i + 1; j < activos.length; j++) {
+        const a = activos[i];
+        const b = activos[j];
+        if (conHistoria.has(clave(a, b))) continue;
+
+        // Colores alternos: el reparto queda equilibrado y la vuelta los
+        // cambia de todas formas.
+        const blancas = (i + j) % 2 === 0 ? a : b;
+        const negras = blancas === a ? b : a;
+
+        const room = rooms.createRoom(blancas, negras);
+        await persistRoom(room);
+        creadas.push({ code: room.code, blancas, negras });
+      }
+    }
+
+    return creadas;
+  }
+
+  app.post('/api/admin/partidas-pendientes', async (req, res) => {
+    try {
+      if (!esAdmin(req)) return res.status(401).json({ ok: false, error: 'No autorizado' });
+      const vueltas = await crearVueltasPendientes(baseUrl(req));
+      const creadas = await crearPrimerasPendientes();
+      res.json({ ok: true, creadas, vueltas, total: creadas.length + vueltas.length });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
   app.post('/api/admin/vueltas', async (req, res) => {
     try {
       if (!esAdmin(req)) return res.status(401).json({ ok: false, error: 'No autorizado' });
@@ -1585,6 +1643,17 @@ function createServer(options = {}) {
       const creadas = await crearVueltasPendientes(baseUrl());
       if (creadas.length) {
         log('Vueltas creadas al arrancar:', creadas.map(p => p.code).join(', '));
+      }
+
+      // Completar el torneo: parejas de jugadores activos que aún no tienen
+      // ninguna partida. Se salta a los jugadores de baja (Álvaro).
+      if (options.completarAlArrancar) {
+        const nuevas = await crearPrimerasPendientes();
+        if (nuevas.length) {
+          log('Partidas nuevas al arrancar:', nuevas
+            .map(p => p.blancas + '-' + p.negras + ' (' + p.code + ')')
+            .join(', '));
+        }
       }
 
       return restored;
