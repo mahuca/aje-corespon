@@ -26,8 +26,8 @@ const { RoomManager, Room, normalizeCode, sameName, PLAZO_DEFAULT_MS, GRACIA_DEF
 const { createStore } = require('./db');
 const { computeClassification, RATING_INICIAL } = require('./classification');
 const {
-  WhatsAppGateway, INVITACION, TURNO, RECORDATORIO, PRORROGA, TIEMPO, FIN, VUELTA,
-  invitacionMsg, turnoMsg, recordatorioMsg, prorrogaMsg, tiempoMsg, finMsg, vueltaMsg
+  WhatsAppGateway, INVITACION, TURNO, RECORDATORIO, PRORROGA, TIEMPO, FIN, VUELTA, TABLAS,
+  invitacionMsg, turnoMsg, recordatorioMsg, prorrogaMsg, tiempoMsg, finMsg, vueltaMsg, tablasMsg
 } = require('./whatsapp');
 
 const CLEANUP_INTERVAL_MS = 60 * 1000;
@@ -580,6 +580,16 @@ function createServer(options = {}) {
 
       await persistRoom(room);
       io.to(room.code).emit('corespon:room:update', room.toPublic());
+
+      // Aviso al rival solo la primera vez: repetir la propuesta no debe
+      // llenar el grupo de Telegram de mensajes repetidos.
+      if (!result.already) {
+        const rival = ctx.color === 'white' ? 'black' : 'white';
+        const host = baseUrl(socket);
+        gateway.enqueue(room.code, TABLAS, room.players[rival],
+          tablasMsg(room, rival, host), host);
+      }
+
       respond({ ok: true, offer: result.offer, already: result.already });
     });
 

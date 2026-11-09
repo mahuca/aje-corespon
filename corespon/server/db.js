@@ -79,7 +79,7 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS corespon_notificaciones (
      id BIGSERIAL PRIMARY KEY,
      room_code TEXT,
-     tipo TEXT NOT NULL,           -- 'invitacion' | 'turno' | 'recordatorio' | 'prorroga' | 'tiempo' | 'fin'
+     tipo TEXT NOT NULL,           -- 'invitacion' | 'turno' | 'recordatorio' | 'prorroga' | 'tiempo' | 'fin' | 'vuelta' | 'tablas'
      destinatario TEXT,
      jugador TEXT,
      texto TEXT,

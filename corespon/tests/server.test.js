@@ -1784,6 +1784,46 @@ test('tablas: rechazar mantiene la partida en curso', async (t) => {
   assert.equal(rechazo.room.drawOffer, null);
 });
 
+test('notificaciones: proponer tablas avisa al rival una sola vez', async (t) => {
+  const store = createMemoryStore();
+  const gateway = new WhatsAppGateway({
+    store,
+    providerName: 'fake',
+    provider: async () => ({ id: 'mensaje' })
+  });
+
+  const { instance, port, base } = await boot(store, { gateway });
+  t.after(() => cleanup(instance));
+
+  const { room } = await invite(base);
+  const white = await connect(port);
+  const black = await connect(port);
+  await request(white, 'corespon:join', { code: room.code, name: 'Manuel' });
+  await request(black, 'corespon:join', { code: room.code, name: 'Fernan' });
+
+  const oferta = await request(white, 'corespon:draw', { code: room.code });
+  assert.equal(oferta.ok, true);
+  await wait(60);
+
+  const avisos = (await store.getNotificacionesPendientes())
+    .filter(n => n.tipo === 'tablas');
+  assert.equal(avisos.length, 1, 'debe avisar una vez al rival');
+  assert.equal(avisos[0].jugador, 'Fernan');
+  assert.ok(avisos[0].texto.includes(room.code));
+  assert.match(avisos[0].texto, /propone tablas/);
+  assert.doesNotMatch(avisos[0].texto, /\$\{/);
+  assert.doesNotMatch(avisos[0].texto, /undefined/);
+
+  // Repetir la propuesta responde "already" y no duplica el aviso.
+  const repetida = await request(white, 'corespon:draw', { code: room.code });
+  assert.equal(repetida.ok, true);
+  assert.equal(repetida.already, true);
+  await wait(60);
+  const otraVez = (await store.getNotificacionesPendientes())
+    .filter(n => n.tipo === 'tablas');
+  assert.equal(otraVez.length, 1);
+});
+
 test('api: /healthz responde sin tocar la base de datos', async (t) => {
   const { instance, base } = await boot();
   t.after(() => cleanup(instance));

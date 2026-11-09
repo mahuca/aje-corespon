@@ -66,7 +66,12 @@ const MESSAGES = {
   vuelta:
     '♟ *Partida de vuelta, ${jugador}*\n\nJuegas con ${color} contra ${rival} ' +
     'en la partida ${code}. Se han cambiado los colores y el tablero ya está ' +
-    'listo.\n\nEntra a jugar: ${host}/corespon/${code}'
+    'listo.\n\nEntra a jugar: ${host}/corespon/${code}',
+
+  tablas:
+    '🤝 *${jugador}, te proponen tablas*\n\n${rival} propone tablas en la ' +
+    'partida ${code}. Si estás de acuerdo, entra y pulsa *Aceptar tablas*.\n\n' +
+    'Entra a la partida: ${host}/corespon/${code}'
 };
 
 // ============================ TELEGRAM ============================
@@ -529,6 +534,22 @@ function vueltaMsg(room, color, host) {
   };
 }
 
+/*
+ * Aviso de tablas: se manda al rival que tiene que aceptar o rechazar.
+ * `color` es el destinatario (el que recibe la propuesta).
+ */
+function tablasMsg(room, color, host) {
+  return {
+    tipo: 'tablas',
+    vars: {
+      jugador: jugadorDe(room, color),
+      rival: rivalDe(room, color),
+      code: room.code,
+      host
+    }
+  };
+}
+
 module.exports = {
   WhatsAppGateway,
   NotificationGateway: WhatsAppGateway,
@@ -545,11 +566,13 @@ module.exports = {
   TIEMPO: 'tiempo',
   FIN: 'fin',
   VUELTA: 'vuelta',
+  TABLAS: 'tablas',
   invitacionMsg,
   turnoMsg,
   recordatorioMsg,
   prorrogaMsg,
   tiempoMsg,
   finMsg,
-  vueltaMsg
+  vueltaMsg,
+  tablasMsg
 };

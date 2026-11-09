@@ -10,7 +10,7 @@
 | Instalar | `npm install` |
 | Servidor | `npm start` → `http://localhost:3001/corespon` |
 | Auto-reload | `npm run dev` |
-| Tests (127) | `npm test` |
+| Tests (128) | `npm test` |
 | Un solo test | `cd corespon && node --test --test-name-pattern="vuelta" tests/server.test.js` |
 | Crear roster en Postgres | `npm run init-db` (opcional: se crea solo al arrancar) |
 | Liveness / readiness | `curl /healthz` (no toca BD) · `curl /api/status` (sí toca BD) |
@@ -53,6 +53,7 @@
 - El plazo de 2 días **empieza cuando ambos han entrado**, no al crear la sala. Hay 1 h de gracia y hasta 3 prórrogas de 1 día.
 - Etiquetas: `joined:false` → "«rival» aún no ha entrado"; `connected:false` → "Rival sin conexión (la partida sigue)". En ambos casos se puede mover.
 - El aviso de turno va a quien **debe mover**, no a quien se movió.
+- **Tablas por acuerdo**: `Proponer tablas` (en la tarjeta del plazo) avisa al rival por Telegram (`tablasMsg`) y deja `drawOffer` en la sala; el rival ve `Aceptar tablas` / `Rechazar`. La oferta se guarda y sobrevive a reinicios. Repetir la propuesta no duplica el aviso.
 - El listado va por `plazo_hasta` (la que caduca antes, primero); el cliente lo agrupa en *Te toca mover* / *Esperando al rival* / *Otras* usando el nombre del lobby.
 
 ## 5. Claves (PIN) y alta cerrada
