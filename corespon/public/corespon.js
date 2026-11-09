@@ -110,6 +110,9 @@
     moveNextBtn: document.getElementById('moveNextBtn'),
     moveLiveBtn: document.getElementById('moveLiveBtn'),
     moveViewLabel: document.getElementById('moveViewLabel'),
+    moveConfirm: document.getElementById('moveConfirm'),
+    confirmMoveBtn: document.getElementById('confirmMoveBtn'),
+    cancelMoveBtn: document.getElementById('cancelMoveBtn'),
     moveList: document.getElementById('moveList'),
     toast: document.getElementById('toast'),
     partidasSection: document.getElementById('partidasSection'),
@@ -149,6 +152,9 @@
   let legalMoves = [];
   let drag = null;
   let pendingPromotion = null;
+  // Jugada preparada pero sin enviar: { from, to, promotion, preview }.
+  // El tablero enseña `preview` hasta que se pulsa OK o se cancela.
+  let pendingMove = null;
   let movePending = false;
   // Resultado de la partida que acaba de terminar y color de la vuelta que
   // el servidor ha creado sola. Se usa para enseñar la tarjeta de "partida
@@ -325,6 +331,7 @@
     updateUrl(room.code, isSpectator ? '?ver=1' : '');
     clearSelection();
     pendingPromotion = null;
+    pendingMove = null;
     movePending = false;
     el.promotionOverlay.hidden = true;
     vista = null;
@@ -370,6 +377,9 @@
 
   function estadoVista() {
     if (!room) return null;
+    // Una jugada preparada enseña ya la posición resultante, aunque el
+    // servidor todavía no la conozca.
+    if (vista === null && pendingMove) return pendingMove.preview;
     return vista === null ? room.state : estadoEnJugada(vista);
   }
 
@@ -384,6 +394,8 @@
     } else {
       vista = Math.max(0, numero);
     }
+    // Si se estaba preparando una jugada, mirar atrás la descarta.
+    pendingMove = null;
     clearSelection();
     render();
   }
@@ -410,6 +422,14 @@
       ? 'Viendo la jugada ' + vista + ' de ' + total
       : 'En vivo · jugada ' + total + ' de ' + total;
     document.body.classList.toggle('is-reviewing', revisando);
+
+    // El botón de confirmación solo tiene sentido con una jugada preparada,
+    // en vivo, sin ser espectador y con la partida en marcha.
+    const preparada = !!pendingMove && !revisando && !isSpectator
+      && !(room.status && room.status.over);
+    el.moveConfirm.hidden = !preparada;
+    el.confirmMoveBtn.disabled = !O.isConnected() || movePending;
+    el.cancelMoveBtn.disabled = movePending;
   }
 
   // ==================== TABLERO ====================
@@ -682,6 +702,11 @@
 
     if (!rival) {
       el.statusText.textContent = 'Esperando a que se una un rival…';
+      return;
+    }
+
+    if (pendingMove) {
+      el.statusText.textContent = 'Jugada preparada. Pulsa OK para enviarla.';
       return;
     }
 
@@ -987,6 +1012,7 @@
     if (!room || !myColor) return false;
     // Mirando una jugada anterior: el tablero es solo de consulta.
     if (!enVivo()) return false;
+    if (pendingMove) return false;
     if (room.status.over || pendingPromotion || movePending) return false;
     if (!O.isConnected()) return false;
     if (room.state.turn !== myColor) return false;
@@ -1015,6 +1041,13 @@
       showToast(isSpectator
         ? 'Has vuelto a la posición actual'
         : 'Has vuelto al presente para poder mover');
+      return;
+    }
+
+    // Con una jugada preparada, tocar el tablero la descarta. Se prefiere
+    // esto a mover otra pieza por error mientras se revisa la jugada.
+    if (pendingMove) {
+      cancelarJugada(true);
       return;
     }
 
@@ -1085,7 +1118,7 @@
       return true;
     }
 
-    sendMove(selected, { row, col });
+    prepararJugada(selected, { row, col });
     return true;
   }
 
@@ -1186,6 +1219,58 @@
 
   // ==================== JUGADAS ====================
 
+  /*
+   * Prepara la jugada sin enviarla. El tablero pinta ya la posición
+   * resultante (`preview`) y aparece el botón OK; hasta que se pulsa, el
+   * servidor no sabe nada y se puede cancelar sin consecuencias.
+   */
+  function prepararJugada(from, to, promotion) {
+    if (!room || movePending || pendingMove) return;
+    if (!from || !to) return;
+    const resultado = E.validateAndApply(
+      room.state,
+      [from.row, from.col],
+      [to.row, to.col],
+      promotion
+    );
+    if (!resultado.ok) {
+      showToast(errorText(resultado.error), 'error');
+      clearSelection();
+      render();
+      return;
+    }
+    pendingMove = {
+      from: { row: from.row, col: from.col },
+      to: { row: to.row, col: to.col },
+      promotion: promotion || null,
+      preview: resultado.state
+    };
+    clearSelection();
+    render();
+    if (!el.moveConfirm.hidden) {
+      el.confirmMoveBtn.focus({ preventScroll: true });
+    }
+  }
+
+  function confirmarJugada() {
+    if (!pendingMove || movePending) return;
+    if (!O.isConnected()) {
+      showToast('Sin conexión. Reconectando…', 'error');
+      return;
+    }
+    const jugada = pendingMove;
+    pendingMove = null;
+    sendMove(jugada.from, jugada.to, jugada.promotion || undefined);
+  }
+
+  function cancelarJugada(avisar) {
+    if (!pendingMove) return;
+    pendingMove = null;
+    clearSelection();
+    render();
+    if (avisar) showToast('Jugada descartada. Elige otra.');
+  }
+
   function sendMove(from, to, promotion) {
     if (movePending) return;
     movePending = true;
@@ -1226,7 +1311,7 @@
     pendingPromotion = null;
     el.promotionOverlay.hidden = true;
     if (!promotion) return;
-    sendMove(promotion.from, promotion.to, type.toLowerCase());
+    prepararJugada(promotion.from, promotion.to, type.toLowerCase());
   }
 
   function cancelPromotion() {
@@ -2373,6 +2458,7 @@
     myColor = null;
     vista = null;
     pendingPromotion = null;
+    pendingMove = null;
     vueltaInfo = null;
     movePending = false;
     clearSelection();
@@ -2430,6 +2516,11 @@
     lastDrawOffer = payload.drawOffer || null;
     room = payload;
 
+    // Cualquier actualización del servidor invalida una jugada sin confirmar:
+    // la posición de referencia puede haber cambiado (fin de partida, vuelta,
+    // prórroga, etc.).
+    pendingMove = null;
+
     // Si la partida se reinició (vuelta automática) o encogió, la vista
     // vuelve al presente.
     if (vista !== null && vista >= (payload.history || []).length) vista = null;
@@ -2472,6 +2563,7 @@
     myColor = null;
     vista = null;
     pendingPromotion = null;
+    pendingMove = null;
     vueltaInfo = null;
     movePending = false;
     clearSelection();
@@ -2487,6 +2579,7 @@
     myColor = payload.color;
     orientation = payload.color;
     pendingPromotion = null;
+    pendingMove = null;
     movePending = false;
     clearSelection();
     el.promotionOverlay.hidden = true;
@@ -2503,6 +2596,7 @@
       orientation = payload.color;
       clearSelection();
       pendingPromotion = null;
+      pendingMove = null;
       el.promotionOverlay.hidden = true;
     }
     if (el.gameScreen.hidden) {
@@ -2522,22 +2616,28 @@
       badge.classList.add('warn');
       el.connectionText.textContent = 'Reconectando…';
       movePending = false;
+      pendingMove = null;
     } else {
       badge.classList.add('bad');
       el.connectionText.textContent = 'Sin conexión';
       movePending = false;
+      pendingMove = null;
       if (drag) {
         if (drag.clone) drag.clone.remove();
         drag = null;
       }
     }
-    if (room && !el.gameScreen.hidden) renderStatus();
+    if (room && !el.gameScreen.hidden) {
+      renderStatus();
+      renderVista();
+    }
   });
 
   O.on('session-lost', () => {
     if (busy) return;
     room = null;
     myColor = null;
+    pendingMove = null;
     showLobby();
     updateUrl(null);
     showLobbyError('La sala ya no existe o ha caducado.');
@@ -2685,6 +2785,13 @@
     } else if (event.key === 'ArrowRight') {
       event.preventDefault();
       moverVista(1);
+    } else if (event.key === 'Enter' && pendingMove
+        && !(destino && destino.closest && destino.closest('button, a'))) {
+      event.preventDefault();
+      confirmarJugada();
+    } else if (event.key === 'Escape' && pendingMove) {
+      event.preventDefault();
+      cancelarJugada(true);
     } else if (event.key === 'Escape' && !enVivo()) {
       event.preventDefault();
       fijarVista(null);
@@ -2701,6 +2808,9 @@
   document.addEventListener('pointermove', onPointerMove);
   document.addEventListener('pointerup', onPointerUp);
   document.addEventListener('pointercancel', onPointerCancel);
+
+  el.confirmMoveBtn.addEventListener('click', confirmarJugada);
+  el.cancelMoveBtn.addEventListener('click', () => cancelarJugada(true));
 
   // Inicialización
   function init() {

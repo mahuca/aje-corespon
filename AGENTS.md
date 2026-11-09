@@ -1,144 +1,79 @@
 # Aje-Corespon — Agent Quickstart
 
-**Repo:** https://github.com/mahuca/aje-corespon  
-**Producción:** https://aje-corespon.onrender.com
+**Repo:** https://github.com/mahuca/aje-corespon
+**Producción:** https://aje-corespon.onrender.com (`/corespon`)
 
----
-
-## 1. Comandos útiles
+## 1. Comandos
 
 | Acción | Comando |
 |---|---|
-| Instalar dependencias | `npm install` |
-| Iniciar servidor (producción) | `npm start` |
-| Modo desarrollo (auto-reload) | `npm run dev` |
-| Ejecutar tests (127 tests) | `npm test` |
-| Crear roster en Postgres | `npm run init-db` |
-| Ver cola de notificaciones (admin) | `curl -H "x-admin-token: $ADMIN_TOKEN" "https://<url>/api/whatsapp/queue"` |
-| Health check | `curl https://<url>/healthz` |
+| Instalar | `npm install` |
+| Servidor | `npm start` → `http://localhost:3001/corespon` |
+| Auto-reload | `npm run dev` |
+| Tests (127) | `npm test` |
+| Un solo test | `cd corespon && node --test --test-name-pattern="vuelta" tests/server.test.js` |
+| Crear roster en Postgres | `npm run init-db` (opcional: se crea solo al arrancar) |
+| Liveness / readiness | `curl /healthz` (no toca BD) · `curl /api/status` (sí toca BD) |
+| Cola de avisos (admin) | `curl -H "x-admin-token: $ADMIN_TOKEN" /api/whatsapp/queue` |
 
----
+- `cp .env.example .env` para configurar. **Sin `DATABASE_URL` todo va a memoria volátil** (se pierde al reiniciar).
+- Los tests usan `pg-mem` y un notificador falso: no necesitan red ni base de datos.
 
-## 2. Arquitectura y entrypoints
+## 2. Entrypoints y arquitectura
 
-- **Servidor:** `server.js` — entrada Node/Express + Socket.IO. Escucha en `PORT=3001`.
-- **Rutas principales:** `corespon/server/server.js` (HTTP + Socket.IO), `corespon/server/rooms.js` (reglas de sala), `corespon/server/db.js` (store), `corespon/server/classification.js` (ranking 1500±25), `corespon/server/whatsapp.js` (notificaciones Telegram).
-- **Cliente:** `corespon/public/` — HTML/JS del tablero (`corespon.html`, `online-core.js`, `corespon.js`).
-- **Tests:** `corespon/tests/server.test.js` — 127 tests de integración (5 del torneo, 8 de administración, 9 de claves, 6 del alta, 1 de la vista de jugadas, 2 del orden del listado y 4 de la vuelta además de los de regresión). Se ejecutan con `cd corespon && node --test tests/*.test.js`.
+- **Arranque real:** `server.js` (raíz) → `createServer({ completarAlArrancar: true })` → `corespon/server/server.js`. Render ejecuta `node server.js` desde la raíz (sin `rootDirectory`).
+- **No arranques `corespon/server/server.js` directamente**: se autoarranca, pero **sin** `completarAlArrancar`, así que no crea las partidas ni vueltas que falten al inicio.
+- Hay dos `package.json` (raíz y `corespon/`). **Manda el de la raíz** (`npm test` hace `cd corespon && node --test tests/*.test.js`).
+- Backend: `corespon/server/server.js` (Express + Socket.IO), `rooms.js` (salas y vuelta), `db.js` (Postgres/memoria), `classification.js` (rating), `whatsapp.js` (Telegram/cola).
+- Cliente: `corespon/public/` (`corespon.html`, `corespon.js`, `online-core.js`, `styles.css`). Motor compartido: `corespon/shared/engine.js`, servido en `/shared/engine.js`.
+- Tests en 4 archivos: `server`, `engine`, `notifications`, `postgres`.
+- `online-chess/` es **otro proyecto clonado** dentro del repo (gitignored): no editarlo ni usarlo como referencia.
 
----
+## 3. Entorno y admin
 
-## 3. Configuración y entorno
+| Variable | Qué hace |
+|---|---|
+| `DATABASE_URL` | Postgres (Neon `/neondb` en prod). Sin ella, memoria volátil. |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Avisos al grupo. |
+| `TELEGRAM_CHAT_<JUGADOR>` | Chat privado de ese jugador; si falta, el aviso va al grupo. |
+| `ADMIN_TOKEN` | Protege los endpoints admin. **Si no está definido quedan abiertos**; si está, exigen `x-admin-token`. |
+| `PIN_PEPPER` | Sal del hash de claves. Cambiarla invalida **todas** las claves existentes. |
+| `BASE_URL` / `TZ` | Enlaces de los mensajes / `Europe/Madrid`. |
 
-### Variables críticas (`.env` y Render)
+- Endpoints admin: `GET /api/whatsapp/queue`, `GET/POST/PATCH /api/tournament/players`, `POST /api/admin/rotate-seats`, `POST /api/admin/vueltas`, `POST /api/admin/partidas-pendientes`, `GET/POST /api/admin/enrollment`.
+- `Abuelo` es admin **de aplicación** (`ADMINISTRADORES` en `server.js`), distinto del `ADMIN_TOKEN` de entorno.
+- Este servicio usa tablas `corespon_*` en la **misma BD que `ajedrez-online`**: no tocar las tablas `torneo_*`.
 
-| Variable | Importancia | Qué hace |
-|---|---|---|
-| `DATABASE_URL` | Alta | Cadena Postgres (Neon `/neondb` en prod). Sin ella, usa memoria volátil. |
-| `TELEGRAM_BOT_TOKEN` | Alta | Token de @BotFather. |
-| `TELEGRAM_CHAT_ID` | Alta | Chat o grupo donde van los mensajes de sistema (ej. `-100...`). |
-| `TELEGRAM_CHAT_<JUGADOR>` | Media | Chat privado por jugador. Si existe, los avisos a ese jugador van privado; si falta, van al grupo. Ej: `TELEGRAM_CHAT_ABUELO=1385963387`. |
-| `ADMIN_TOKEN` | Media | Protege el panel: `GET /api/whatsapp/queue`, `GET/PATCH /api/tournament/players`, `POST /api/admin/rotate-seats` y `GET/POST /api/admin/enrollment` (cabecera `x-admin-token`). |
-| `PIN_PEPPER` | Media | Sal que se mezcla con la clave de cada jugador antes de guardarla (`sha256`). Si se cambia, **todas las claves existentes dejan de valer**. |
-| `BASE_URL` | Recomendada | URL pública usada en enlaces de los mensajes de Telegram. |
-| `TZ` | Recomendada | `Europe/Madrid` (afecta fechas en notificaciones). |
-| `NOTIFY_PROVIDER` | Baja | `telegram` (por defecto si hay token). |
+## 4. Reglas de partida (lo que se rompe fácil)
 
-### Notas de configuración
+- **Vuelta automática**: al terminar la primera partida de una pareja (mate, rendición, tiempo o tablas) la **misma sala** se reinicia con los colores cambiados. Nadie acepta nada y **no hay tercera partida**. Lógica: `crearVuelta()` (`server.js`), `Room.iniciarVuelta()` y bandera `vueltaCreada` (`rooms.js`).
+- Guardia contra duplicados: la vuelta solo se crea si la pareja tiene 1 resultado, 0 partidas abiertas y ambos jugadores activos.
+- `Abandonar` = rendición; `Partidas` = volver a la lista sin rendirse; cerrar pestaña = partida guardada. En el servidor, `corespon:leave` con `resign:false` solo desconecta el asiento.
+- Un jugador puede tener **varias partidas abiertas** a la vez, pero el cliente guarda **una sola sesión** (`ajeCoresponSession_v1`): la última sala abierta.
+- El plazo de 2 días **empieza cuando ambos han entrado**, no al crear la sala. Hay 1 h de gracia y hasta 3 prórrogas de 1 día.
+- Etiquetas: `joined:false` → "«rival» aún no ha entrado"; `connected:false` → "Rival sin conexión (la partida sigue)". En ambos casos se puede mover.
+- El aviso de turno va a quien **debe mover**, no a quien se movió.
+- El listado va por `plazo_hasta` (la que caduca antes, primero); el cliente lo agrupa en *Te toca mover* / *Esperando al rival* / *Otras* usando el nombre del lobby.
 
-- **Roster fijo de 6 jugadores**; `Abuelo` es administrador. Se crea solo al arrancar; no hace falta `init-db` en producción.
-- El roster comparte base de datos Neon con `ajedrez-online`, pero usa tablas `corespon_*` (no se pisan).
-- Si cambias una env var en Render, **hay que pulsar "Manual Deploy → Deploy latest commit"** para que surta efecto.
+## 5. Claves (PIN) y alta cerrada
 
----
-
-## 4. Quirks y gotchas (lo que un agente probablemente se perdería)
-
-### Flujo de partida
-
-- **Vuelta automática**: cada pareja juega dos partidas. Al terminar la primera (jaque mate, rendición, tiempo o tablas) el servidor reinicia **la misma sala** con los colores cambiados y avisa a cada jugador por pantalla y Telegram. Nadie acepta nada y no hay tercera partida. La lógica está en `crearVuelta()` (`server.js`) y `Room.iniciarVuelta()` (`rooms.js`).
-- **Dos partidas a la vez**: el usuario puede cambiar de partida o volver a la lista **sin rendirse**. El botón `Partidas` regresa al listado; solo `Abandonar` cuenta como derrota.
-- **`Abandonar` = rendición**; `Partidas` = volver a la lista sin rendirse; cerrar pestaña = guardar (sesión persistida).
-- **Plazo de 2 días** empieza cuando **ambos** jugadores han entrado a la sala, no al crear la sala.
-- **Etiquetas de estado**:
-  - `joined:false` → `"<rival> aún no ha entrado"`
-  - `joined:true && connected:false` → `"Rival sin conexión (la partida sigue)"`
-  - En ambos casos el jugador **puede mover igual** (no se bloquea por desconexión).
-
-### Botones y UI
-
-- El botón que rinde debe llamarse **Abandonar**, no "Salir", para no confundir con cerrar pestaña.
-- **Cambio de sala sin rendir**: `server.js` usa `resign:true` para rendir; `resign:false` solo desconecta el asiento.
-- El aviso de turno ahora avisa al jugador que debe mover (no al que se movió). Fix commit `52ef2d4`.
-- La lista de "Partidas abiertas" muestra el nombre de quien mueve con el badge `▶ Nombre` (`.turno-badge`). Se calcula en el cliente desde `turno` (`'white' | 'black'`) que ya devuelve `GET /api/partidas`; sin texto tipo "Le toca a".
-- **Orden de "Partidas abiertas"**: el servidor las manda por plazo (`ORDER BY plazo_hasta`; en memoria `.sort(porPlazo)`), la que caduca antes primero. El cliente las agrupa en tres bloques: *Te toca mover* (tus partidas con el turno), *Esperando al rival* (tus partidas sin el turno) y *Otras partidas*; dentro de cada bloque, por plazo. El bloque se decide con el nombre elegido en el lobby (`nombreActual()`); sin nombre no hay rótulos y todo va por plazo. Cambiar de nombre recarga la lista.
-- **Último movimiento y repaso de jugadas**: las dos casillas de la última jugada van en ámbar (`.last-move`; la de destino además con `.last-move-to`). Bajo el tablero están `‹` `›` `Ahora` (`#movePrevBtn`, `#moveNextBtn`, `#moveLiveBtn`) y un cartel (`#moveViewLabel`). Las posiciones anteriores **se reconstruyen en el navegador** con `E.newState()` + `E.validateAndApply()` sobre `room.history` (el servidor solo manda la posición actual); se cachean hasta que llega otra jugada. Mientras se mira atrás: `enVivo()` es `false`, `canInteract()` bloquea el tablero, el borde se pone ámbar y las tarjetas de resultado se apartan. Un toque en el tablero vuelve al presente. Las jugadas de la lista son botones (saltan a esa posición) y el teclado responde con ←, → y Escape.
-
-### Clave personal (PIN) y alta cerrada
-
-- **Cada jugador tiene una clave de 4–6 dígitos** para demostrar quién es; sin ella cualquiera con el código de sala puede escribir su nombre y mover por él.
-- Se pide **una vez por dispositivo/navegador**: se guarda en `localStorage` (`corespon.pin.<Nombre>`) y se autorrellena. Recargar o reiniciar el servidor **no** la pide.
-- **Reconectar con el token del asiento no pide clave** (es la prueba de identidad). El token va en el `snapshot` de la sala, así que sobrevive a los deploys.
-- **El alta está cerrada por defecto**: una clave nueva solo se puede registrar si el admin abre la ventana (`POST /api/admin/enrollment { abrir: true, horas }`). Cerrada → error **`alta_cerrada`**. Así nadie reclama el nombre de otro.
-- El admin puede **asignar** (`{ pin: "1234" }`) o **borrar** (`{ pin: null }`) la clave de un jugador, y ver `tieneClave` en el listado. Borrar la clave de alguien que está jugando no le expulsa.
+- Clave de 4–6 dígitos por jugador; sin ella cualquiera con el código de sala puede escribir su nombre y mover por él.
 - Se guarda `sha256(nombre + ':' + pin + PIN_PEPPER)`, nunca en claro. 5 fallos seguidos → bloqueo 10 min (`rate_limited`).
-- `POST /api/admin/rotate-seats` cambia los tokens de las salas abiertas: deja fuera cualquier sesión antigua con un nombre ajeno **sin tocar** FEN, PGN, plazos ni turno. Es el paso obligatorio al activar las claves con partidas en curso.
-- Orden de puesta en marcha: deploy → **abrir alta 2 h** → **cerrar sesiones abiertas** → avisar a los 6 → verificar "6 de 6 con clave" en el panel → **cerrar el alta**.
-- Endpoints del alta: `GET /api/admin/enrollment` (estado + `sinClave`) y `POST /api/admin/enrollment` (`{ abrir: true, horas: 1..168 }` o `{ abrir: false }`). La hora de cierre se guarda en `corespon_ajustes` y sobrevive a los reinicios.
+- Se pide **una vez por navegador** (`localStorage`, clave `corespon.pin.<Nombre>`). Reconectar con el token del asiento **no** pide clave: el token viaja en el snapshot y sobrevive a los deploys.
+- **El alta está cerrada por defecto**: registrar una clave nueva exige abrir la ventana (`POST /api/admin/enrollment { abrir:true, horas }`); si no, error `alta_cerrada`.
+- Puesta en marcha con partidas en curso: deploy → abrir alta 2 h → `POST /api/admin/rotate-seats` → avisar a los jugadores → verificar "6 de 6 con clave" → cerrar el alta.
+- `rotate-seats` cambia los tokens sin tocar FEN, PGN, plazos ni turno.
 
-### Sesión y recarga
+## 6. UI: gotchas
 
-- `loadSession()` se llama al cargar la página; recargar **no pierde** la sesión.
-- `session = loadSession()` en `online-core.js`. Auto-resume al reconectar.
+- **Confirmar jugada**: soltar o tocar el destino **no envía** la jugada. Se prepara (`pendingMove`), el tablero pinta la posición resultante (`estadoVista()` devuelve `pendingMove.preview`) y aparece **OK en rojo** (`#confirmMoveBtn`). OK o `Enter` envía; `Cancelar`, tocar el tablero o `Escape` la descarta. Mientras hay jugada preparada, `canInteract()` es `false`.
+- La coronación también se confirma: elegir pieza abre la vista previa y luego OK.
+- El botón que rinde debe llamarse **Abandonar**, no "Salir", para no confundirlo con cerrar la pestaña.
+- Repaso de jugadas: el servidor solo manda la posición actual; el cliente reconstruye el pasado con `E.newState()` + `E.validateAndApply()` sobre `room.history`. Mientras se revisa, `enVivo()` es `false` y el tablero queda bloqueado.
+- El badge `▶ Nombre` de quien mueve se calcula en el cliente desde `turno`; el servidor no manda ese texto.
 
-### Telegram: avisos privados vs grupo
+## 7. Despliegue (Render)
 
-- Si existe `TELEGRAM_CHAT_<JUGADOR>`, los avisos de turno a ese jugador van a su chat privado.
-- Si no existe, van al grupo `TELEGRAM_CHAT_ID`.
-- **Para que abuelo tenga privado:** ejecutar `/start Abuelo` en Telegram con el bot `@ajecorespon_abuelo_bot`. Esto registra su `chat_id` privado.
-- Los mensajes de sistema (invitar, recordatorio, fin de partida) **siguen yendo al grupo** mientras `TELEGRAM_CHAT_ID` esté configurado.
-
-### Torneo (round-robin, 2 partidas por pareja)
-
-- `GET /api/tournament` (alias `GET /api/tournament/start`) → resumen de solo lectura calculado con los jugadores activos: `totalPartidas = n × (n − 1)`. Con los 6 por defecto: 15 parejas × 2 = **30 partidas**. Devuelve además `partidasJugadas` / `partidasPendientes`.
-- `POST /api/tournament/players` con `{ "nombre": "Nuria" }` → añade un jugador (400 nombre vacío, 409 duplicado). Exige `x-admin-token` **solo si `ADMIN_TOKEN` está definido**; en local sin `.env` funciona sin token.
-- `GET /api/tournament/players` (admin) → lista completa con `activa` y `tieneClave`. `PATCH /api/tournament/players/:id` con `{ "activa": false }` → **baja sin borrar historial** (sale del torneo y de la clasificación, conserva sus partidas). Se bloquea si quedaran menos de 2 activos. Con `{ "pin": "1234" }` asigna clave y con `{ "pin": null }` la borra.
-- El roster de 6 se sigue creando al arrancar, así que el torneo no necesita configuración previa.
-- En el cliente, `loadClasificacion()` pinta el banner `.torneo-info` encima de la tabla; si el endpoint falla, la tabla se ve como siempre.
-- El lobby tiene un panel **⚙️ Administración** (`#adminForm`) para añadir jugadores: pega el `ADMIN_TOKEN` una vez (se guarda en `localStorage`) y escribe el nombre. Los desplegables se rellenan desde `/api/players`, así que el jugador nuevo aparece sin recargar.
-- **`POST /api/admin/vueltas`** (botón "Crear vueltas pendientes") crea la vuelta de parejas que ya jugaron la ida y no la tienen abierta. Es idempotente y salta a los jugadores de baja. Solo hace falta para partidas terminadas antes de la vuelta automática.
-
-### Tests
-
-- 127 tests en verde tras todos los fixes (5 del torneo, 8 de administración, 9 de claves, 6 del alta, 1 de la vista de jugadas, 2 del orden del listado y 4 de la vuelta).
-
-+ **````POST /api/admin/partidas-pendientes````** (botón "Completar partidas pendientes") crea, en un solo clic, tanto la primera partida de las parejas activas que aún no tienen ninguna, como las vueltas de las que ya jugaron la ida. Salta a los jugadores de baja (p. ej. Álvaro). No duplica nada. La vueltas se crearán solas al terminar cada ida.
-- Los tests usan `pg-mem` (Postgres en memoria) y un proveedor falso de notificaciones.
-- Para testear contra Neon antes de fiar una migración, conviene tener `DATABASE_URL` puesta.
-- Ejecutar: `cd corespon && node --test tests/*.test.js`.
-
----
-
-## 5. Despliegue (Render)
-
-- Servicio: `aje-corespon` — plan free, región `oregon`.
-- `render.yaml`:
-  - `buildCommand: npm ci --omit=dev`
-  - `startCommand: node server.js`
-  - `healthCheckPath: /healthz`
-  - `TZ=Europe/Madrid` y `NOTIFY_PROVIDER=telegram`
-- Variables de entorno en panel Render (ver README): `DATABASE_URL`, `ADMIN_TOKEN`, `BASE_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`.
-- **No tocar `ajedrez-online`** hasta que acabe el torneo en curso (usa tablas `torneo_*`, comparte Neon).
-
----
-
-## 6. Decisiones clave (del PLAN.md / README)
-
-- Ranking base 1500, victoria +25, derrota −25, tablas 0. Mostrar los 6.
-- `Abandonar` = rendición; `Partidas` = volver a lista sin rendirse; cerrar pestaña = guardar.
-- Servidor: `corespon:leave` con `resign:false` solo desconecta el asiento; solo `resign:true` rinde.
-- Etiquetas: `"<rival> aún no ha entrado"` / `"Rival sin conexión (la partida sigue)"`.
-- Bug del aviso de turno: ahora avisa al jugador que le toca, no al que se movió.
-- 127 tests en verde tras fixes.
-
----
+- Servicio `aje-corespon`, plan free, región `oregon`: `buildCommand: npm ci --omit=dev`, `startCommand: node server.js`, `healthCheckPath: /healthz`.
+- Variables con `sync: false` en `render.yaml` (`DATABASE_URL`, `ADMIN_TOKEN`, `TELEGRAM_*`) se definen en el panel.
+- Tras desplegar, comprobar `GET /api/status` (`estadisticas` desde Postgres) y que las salas abiertas siguen ahí.

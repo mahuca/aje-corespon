@@ -328,6 +328,13 @@
       <div class="game-status">
         <p id="statusText" class="status-text" aria-live="polite">Conectando…</p>
 
+        <div id="moveConfirm" class="move-confirm" hidden>
+          <button id="confirmMoveBtn" class="move-confirm-btn" type="button"
+                  aria-label="Confirmar jugada" title="Confirmar jugada (Enter)">OK</button>
+          <button id="cancelMoveBtn" class="move-cancel-btn" type="button"
+                  aria-label="Descartar la jugada" title="Descartar la jugada (Escape)">Cancelar</button>
+        </div>
+
         <div id="moveNav" class="move-nav" hidden>
           <button id="movePrevBtn" class="move-nav-btn" type="button"
                   aria-label="Ver la jugada anterior" title="Jugada anterior">‹</button>
