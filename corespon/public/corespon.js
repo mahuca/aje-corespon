@@ -2210,9 +2210,26 @@
 
       const thead = document.createElement('thead');
       const headRow = document.createElement('tr');
-      for (const label of ['Jugador', 'Rating', 'P', 'V', 'E', 'D']) {
+      // Las abreviaturas llevan su significado en el title (leyenda debajo de
+      // la tabla para móvil, donde no hay hover).
+      const columnas = [
+        { label: 'Jugador' },
+        { label: 'Rating' },
+        { label: 'P', titulo: 'Partidas jugadas' },
+        { label: 'V', titulo: 'Victorias' },
+        { label: 'T', titulo: 'Tablas' },
+        { label: 'D', titulo: 'Derrotas' }
+      ];
+      for (const columna of columnas) {
         const th = document.createElement('th');
-        th.textContent = label;
+        if (columna.titulo) {
+          const abbr = document.createElement('abbr');
+          abbr.title = columna.titulo;
+          abbr.textContent = columna.label;
+          th.appendChild(abbr);
+        } else {
+          th.textContent = columna.label;
+        }
         headRow.appendChild(th);
       }
       thead.appendChild(headRow);
@@ -2238,6 +2255,11 @@
       }
       table.appendChild(tbody);
       el.clasificacionList.appendChild(table);
+
+      const leyenda = document.createElement('p');
+      leyenda.className = 'clasificacion-leyenda';
+      leyenda.textContent = 'P partidas · V victorias · T tablas · D derrotas';
+      el.clasificacionList.appendChild(leyenda);
     } catch (error) {
       console.error('Error cargando clasificación:', error);
     }

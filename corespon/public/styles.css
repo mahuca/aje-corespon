@@ -1373,6 +1373,14 @@ body.is-spectator .square { cursor: default; }
 }
 .clasificacion-table tr:hover { background: rgba(255,255,255,0.03); }
 .clasificacion-table td { color: var(--muted-2); }
+.clasificacion-table abbr { text-decoration: none; cursor: help; }
+
+.clasificacion-leyenda {
+  margin: 8px 2px 0;
+  color: var(--muted-2);
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
 
 /* ==================== SECCIONES LOBBY ==================== */
 #partidasSection, #clasificacionSection { margin-top: 36px; }
