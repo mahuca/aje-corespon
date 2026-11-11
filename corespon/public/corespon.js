@@ -2793,17 +2793,15 @@
   el.drawBtn.addEventListener('click', async () => {
     if (!room || !myColor) return;
     const esOfertaRival = !!room.drawOffer && room.drawOffer !== myColor;
-    // Las tablas no se pueden deshacer: se confirma antes de enviar nada.
-    const confirmado = await confirmarAccion(esOfertaRival ? {
-      titulo: '¿Aceptar tablas?',
-      texto: 'La partida terminará en tablas y el resultado no se puede deshacer.',
-      ok: 'Aceptar tablas'
-    } : {
-      titulo: '¿Proponer tablas?',
-      texto: 'Si tu rival acepta, la partida terminará en tablas. No se puede deshacer.',
-      ok: 'Proponer tablas'
-    });
-    if (!confirmado) return;
+    // Confirmación solo antes de proponer (punto 1).
+    if (!esOfertaRival) {
+      const confirmado = await confirmarAccion({
+        titulo: '¿Proponer tablas?',
+        texto: 'Si tu rival acepta, la partida terminará en tablas. No se puede deshacer.',
+        ok: 'Proponer tablas'
+      });
+      if (!confirmado) return;
+    }
     const respuesta = esOfertaRival
       ? await O.acceptDraw(room.code)
       : await O.offerDraw(room.code);
