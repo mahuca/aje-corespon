@@ -141,7 +141,12 @@
     plazoText: document.getElementById('plazoText'),
     extendBtn: document.getElementById('extendBtn'),
     drawBtn: document.getElementById('drawBtn'),
-    declineDrawBtn: document.getElementById('declineDrawBtn')
+    declineDrawBtn: document.getElementById('declineDrawBtn'),
+    confirmOverlay: document.getElementById('confirmOverlay'),
+    confirmTitle: document.getElementById('confirmTitle'),
+    confirmText: document.getElementById('confirmText'),
+    confirmOkBtn: document.getElementById('confirmOkBtn'),
+    confirmCancelBtn: document.getElementById('confirmCancelBtn')
   };
 
   const squares = [];
@@ -162,6 +167,8 @@
   let vueltaInfo = null;
   let busy = false;
   let toastTimer = null;
+  // Resuelve la confirmación abierta (null si no hay ninguna).
+  let confirmResolver = null;
   let isSpectator = false;
   let lastDrawOffer = null;
   let clockSkew = 0;
@@ -248,6 +255,31 @@
     }, 3400);
   }
 
+  /*
+   * Confirmación modal para acciones que no se pueden deshacer (tablas por
+   * acuerdo). Devuelve una promesa con true si se confirma.
+   */
+  function confirmarAccion({ titulo, texto, ok = 'Aceptar', cancelar = 'Cancelar' }) {
+    if (confirmResolver) confirmResolver(false);
+    el.confirmTitle.textContent = titulo;
+    el.confirmText.textContent = texto;
+    el.confirmOkBtn.textContent = ok;
+    el.confirmCancelBtn.textContent = cancelar;
+    el.confirmOverlay.hidden = false;
+    el.confirmOkBtn.focus();
+    return new Promise((resolve) => {
+      confirmResolver = (value) => {
+        confirmResolver = null;
+        el.confirmOverlay.hidden = true;
+        resolve(value);
+      };
+    });
+  }
+
+  function responderConfirmacion(value) {
+    if (confirmResolver) confirmResolver(value);
+  }
+
   function showLobbyError(message) {
     el.lobbyError.textContent = message;
     el.lobbyError.hidden = !message;
@@ -299,6 +331,7 @@
   // ==================== PANTALLAS ====================
 
   function showLobby() {
+    if (confirmResolver) responderConfirmacion(false);
     document.body.classList.remove('in-game');
     el.lobbyScreen.hidden = false;
     el.gameScreen.hidden = true;
@@ -909,6 +942,9 @@
 
   function render() {
     if (!room) return;
+    // Si la partida termina con una confirmación abierta, se cierra: ya no
+    // hay nada que proponer o aceptar.
+    if (room.status.over && confirmResolver) responderConfirmacion(false);
     if (!isSpectator && !myColor) myColor = O.getColor() || 'white';
     renderBoard();
     renderPlayers();
@@ -2757,6 +2793,17 @@
   el.drawBtn.addEventListener('click', async () => {
     if (!room || !myColor) return;
     const esOfertaRival = !!room.drawOffer && room.drawOffer !== myColor;
+    // Las tablas no se pueden deshacer: se confirma antes de enviar nada.
+    const confirmado = await confirmarAccion(esOfertaRival ? {
+      titulo: '¿Aceptar tablas?',
+      texto: 'La partida terminará en tablas y el resultado no se puede deshacer.',
+      ok: 'Aceptar tablas'
+    } : {
+      titulo: '¿Proponer tablas?',
+      texto: 'Si tu rival acepta, la partida terminará en tablas. No se puede deshacer.',
+      ok: 'Proponer tablas'
+    });
+    if (!confirmado) return;
     const respuesta = esOfertaRival
       ? await O.acceptDraw(room.code)
       : await O.offerDraw(room.code);
@@ -2765,6 +2812,12 @@
       return;
     }
     showToast(esOfertaRival ? 'Tablas aceptadas' : 'Propuesta de tablas enviada');
+  });
+
+  el.confirmOkBtn.addEventListener('click', () => responderConfirmacion(true));
+  el.confirmCancelBtn.addEventListener('click', () => responderConfirmacion(false));
+  el.confirmOverlay.addEventListener('click', (event) => {
+    if (event.target === el.confirmOverlay) responderConfirmacion(false);
   });
 
   el.declineDrawBtn.addEventListener('click', async () => {
@@ -2797,6 +2850,19 @@
     if (el.gameScreen.hidden || !room) return;
     if (event.altKey || event.ctrlKey || event.metaKey) return;
     const destino = event.target;
+    // Con una confirmación abierta el teclado es solo para ella: Escape
+    // cancela y Enter acepta (si el foco no está en un botón).
+    if (confirmResolver) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        responderConfirmacion(false);
+      } else if (event.key === 'Enter'
+          && !(destino && destino.closest && destino.closest('button, a'))) {
+        event.preventDefault();
+        responderConfirmacion(true);
+      }
+      return;
+    }
     if (destino && destino.closest
         && destino.closest('input, select, textarea, [contenteditable="true"]')) {
       return;

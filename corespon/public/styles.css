@@ -877,6 +877,57 @@ input:focus {
   margin-top: 16px;
 }
 
+/* ==================== CONFIRMACIÓN ==================== */
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(9, 13, 17, 0.78);
+}
+
+.confirm-card {
+  width: min(100%, 360px);
+  padding: 22px;
+  text-align: center;
+  background: #202a33;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+}
+
+.confirm-card h2 {
+  margin: 0 0 9px;
+  font-family: var(--serif);
+  font-size: 1.45rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.confirm-card p {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
+.confirm-actions .btn { min-width: 120px; }
+
+@media (max-width: 380px) {
+  .confirm-card { padding: 18px; }
+  .confirm-actions { flex-direction: column-reverse; }
+  .confirm-actions .btn { width: 100%; }
+}
+
 /* ==================== ESTADO ==================== */
 .game-status {
   width: var(--board-size);

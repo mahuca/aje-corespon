@@ -360,6 +360,19 @@
     <span>Servidor autoritativo · Reglas completas</span>
   </footer>
 
+  <!-- Confirmación de acciones delicadas (proponer/aceptar tablas). -->
+  <div id="confirmOverlay" class="confirm-overlay" hidden>
+    <div class="confirm-card" role="dialog" aria-modal="true"
+         aria-labelledby="confirmTitle" aria-describedby="confirmText">
+      <h2 id="confirmTitle">¿Seguro?</h2>
+      <p id="confirmText"></p>
+      <div class="confirm-actions">
+        <button id="confirmOkBtn" class="btn btn-primary" type="button">Aceptar</button>
+        <button id="confirmCancelBtn" class="btn btn-ghost" type="button">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script src="/socket.io/socket.io.js"></script>
