@@ -238,6 +238,34 @@ function createServer(options = {}) {
       const whiteName = blancoObj ? blancoObj.nombre : blancas;
       const blackName = negroObj ? negroObj.nombre : negras;
 
+      // Dos partidas por pareja y torneo cerrado para quien ya no tiene
+      // ninguna pendiente. Se comprueba antes de reutilizar una sala abierta
+      // o de crear otra: el único camino a una tercera partida era este.
+      const activos = roster.filter(p => p.activa).map(p => p.nombre);
+      for (const [obj, nombre] of [[blancoObj, whiteName], [negroObj, blackName]]) {
+        // Un jugador nuevo se registrará como activo justo debajo.
+        if (!obj && !activos.some(n => sameName(n, nombre))) activos.push(nombre);
+      }
+
+      const resultados = await store.getResultados();
+      const conteo = contarResultadosPorPareja(resultados);
+      const solicitanteNombre = sameName(whiteName, solicitante) ? whiteName : blackName;
+      const rivalNombre = sameName(whiteName, solicitanteNombre) ? blackName : whiteName;
+
+      if (estadoJugador(solicitanteNombre, activos, conteo).terminado) {
+        return res.status(409).json({ ok: false, error: 'torneo_terminado' });
+      }
+      if (estadoJugador(rivalNombre, activos, conteo).terminado) {
+        return res.status(409).json({
+          ok: false,
+          error: 'rival_torneo_terminado',
+          jugador: rivalNombre
+        });
+      }
+      if ((conteo.get(clavePareja(whiteName, blackName)) || 0) >= PARTIDAS_POR_PAREJA) {
+        return res.status(409).json({ ok: false, error: 'pareja_completa' });
+      }
+
       // Registrar jugadores si no existen
       for (const [obj, nombre] of [[blancoObj, blancas], [negroObj, negras]]) {
         if (!obj) {
@@ -807,10 +835,46 @@ function createServer(options = {}) {
   // así que n jugadores implican n * (n - 1) partidas (6 jugadores → 30).
   const PARTIDAS_POR_PAREJA = 2;
 
-  function resumenTorneo(jugadoresActivos, partidasJugadas) {
+  function clavePareja(a, b) {
+    return [String(a).toLowerCase(), String(b).toLowerCase()].sort().join('|');
+  }
+
+  function contarResultadosPorPareja(resultados) {
+    const conteo = new Map();
+    for (const r of resultados || []) {
+      if (!r || !r.blancas || !r.negras) continue;
+      const clave = clavePareja(r.blancas, r.negras);
+      conteo.set(clave, (conteo.get(clave) || 0) + 1);
+    }
+    return conteo;
+  }
+
+  /*
+   * Estado de un jugador en el round-robin. Una pareja está completa cuando
+   * ya tiene sus dos partidas; `terminado` significa que no le queda ninguna
+   * pendiente contra el resto de jugadores activos (los de baja no cuentan).
+   */
+  function estadoJugador(nombre, rivales, conteo) {
+    const otros = (rivales || []).filter(r => !sameName(r, nombre));
+    const pendientes = otros.filter(r =>
+      (conteo.get(clavePareja(nombre, r)) || 0) < PARTIDAS_POR_PAREJA);
+    return {
+      parejasCompletas: otros.length - pendientes.length,
+      parejasPendientes: pendientes.length,
+      terminado: otros.length > 0 && pendientes.length === 0
+    };
+  }
+
+  function resumenTorneo(jugadoresActivos, resultados = []) {
+    const lista = Array.isArray(resultados) ? resultados : [];
+    const partidasJugadas = Array.isArray(resultados)
+      ? lista.length
+      : Math.max(0, Number(resultados) || 0);
     const numeroJugadores = jugadoresActivos.length;
     const totalParejas = (numeroJugadores * (numeroJugadores - 1)) / 2;
     const totalPartidas = totalParejas * PARTIDAS_POR_PAREJA;
+    const conteo = contarResultadosPorPareja(lista);
+    const nombres = jugadoresActivos.map(p => p.nombre);
 
     const descripcion = numeroJugadores < 2
       ? 'Hacen falta al menos 2 jugadores para empezar el torneo'
@@ -826,7 +890,11 @@ function createServer(options = {}) {
       partidasJugadas,
       partidasPendientes: Math.max(0, totalPartidas - partidasJugadas),
       descripcion,
-      jugadores: jugadoresActivos.map(p => ({ id: p.id, nombre: p.nombre }))
+      jugadores: jugadoresActivos.map(p => ({
+        id: p.id,
+        nombre: p.nombre,
+        ...estadoJugador(p.nombre, nombres, conteo)
+      }))
     };
   }
 
@@ -841,8 +909,7 @@ function createServer(options = {}) {
         store.getResultados()
       ]);
       const activos = (jugadores || []).filter(p => p.activa);
-      const jugadas = Array.isArray(resultados) ? resultados.length : 0;
-      res.json({ ok: true, ...resumenTorneo(activos, jugadas) });
+      res.json({ ok: true, ...resumenTorneo(activos, resultados) });
     } catch (error) {
       res.status(500).json({ ok: false, error: error.message });
     }
@@ -1075,7 +1142,6 @@ function createServer(options = {}) {
         store.getResultados()
       ]);
       const activos = todos.filter(p => p.activa);
-      const jugadas = Array.isArray(resultados) ? resultados.length : 0;
 
       res.json({
         ok: true,
@@ -1085,7 +1151,7 @@ function createServer(options = {}) {
           activa: !!body.activa,
           tieneClave: !!jugador.pinHash
         },
-        torneo: resumenTorneo(activos, jugadas)
+        torneo: resumenTorneo(activos, resultados)
       });
     } catch (error) {
       res.status(500).json({ ok: false, error: error.message });
@@ -1360,12 +1426,16 @@ function createServer(options = {}) {
       const marcarAdmin = body.admin === true || body.admin === 'true';
       await store.savePlayer({ id, nombre, activa: true, admin: marcarAdmin, whatsapp: null });
 
-      const activos = (await store.getPlayers()).filter(p => p.activa);
+      const [todos, resultados] = await Promise.all([
+        store.getPlayers(),
+        store.getResultados()
+      ]);
+      const activos = todos.filter(p => p.activa);
       res.status(201).json({
         ok: true,
         mensaje: 'Jugador añadido al torneo',
         jugador: { id, nombre, admin: marcarAdmin },
-        torneo: resumenTorneo(activos, 0)
+        torneo: resumenTorneo(activos, resultados)
       });
     } catch (error) {
       res.status(500).json({ ok: false, error: error.message });

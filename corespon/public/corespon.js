@@ -50,7 +50,10 @@
     pin_requerido: 'Escribe tu clave para entrar (4-6 dígitos).',
     pin_incorrecto: 'Clave incorrecta. Vuelve a intentarlo.',
     pin_invalido: 'La clave debe tener de 4 a 6 dígitos.',
-    alta_cerrada: 'El alta de claves está cerrada. Pídele al administrador que la abra.'
+    alta_cerrada: 'El alta de claves está cerrada. Pídele al administrador que la abra.',
+    pareja_completa: 'Ya habéis jugado las dos partidas de esta pareja. No se puede crear otra.',
+    torneo_terminado: 'Ya has terminado el torneo: has jugado las dos partidas contra todos los rivales.',
+    rival_torneo_terminado: 'Ese rival ya ha terminado el torneo: no se puede crear otra partida contra él.'
   };
 
   const el = {
@@ -59,6 +62,7 @@
     playerName: document.getElementById('playerName'),
     rivalName: document.getElementById('rivalName'),
     playerColor: document.getElementById('playerColor'),
+    torneoEstado: document.getElementById('torneoEstado'),
     createBtn: document.getElementById('createBtn'),
     joinForm: document.getElementById('joinForm'),
     joinBtn: document.getElementById('joinBtn'),
@@ -169,6 +173,9 @@
   let toastTimer = null;
   // Resuelve la confirmación abierta (null si no hay ninguna).
   let confirmResolver = null;
+  // Último resumen del torneo (/api/tournament): sirve para saber si el
+  // jugador o el rival ya han terminado todas sus parejas.
+  let ultimoTorneo = null;
   let isSpectator = false;
   let lastDrawOffer = null;
   let clockSkew = 0;
@@ -292,7 +299,7 @@
 
   function setBusy(value) {
     busy = value;
-    el.createBtn.disabled = value;
+    refitCreateBtn();
     el.joinBtn.disabled = value;
     el.codeInput.disabled = value;
     const label = el.createBtn.querySelector('span');
@@ -1483,6 +1490,56 @@
   }
 
   /*
+   * Estado de un jugador en el round-robin según el último resumen del
+   * torneo. Devuelve null si aún no hay datos o el nombre no está en la lista.
+   */
+  function estadoJugadorTorneo(nombre) {
+    const buscado = String(nombre || '').trim().toLowerCase();
+    if (!buscado || !ultimoTorneo || !Array.isArray(ultimoTorneo.jugadores)) {
+      return null;
+    }
+    return ultimoTorneo.jugadores.find(j =>
+      String(j.nombre || '').trim().toLowerCase() === buscado) || null;
+  }
+
+  /*
+   * El botón de crear sala depende de tres cosas: que no haya una petición en
+   * curso, que haya rival elegido y que el jugador no haya terminado el torneo.
+   */
+  function refitCreateBtn() {
+    const rival = el.rivalName ? el.rivalName.value.trim() : '';
+    const estado = estadoJugadorTorneo(nombreActual());
+    const estadoRival = estadoJugadorTorneo(rival);
+    el.createBtn.disabled = busy || !rival
+      || !!(estado && estado.terminado)
+      || !!(estadoRival && estadoRival.terminado);
+  }
+
+  /*
+   * Aviso en el formulario: si ya no quedan parejas pendientes, el jugador ha
+   * terminado el torneo y no puede crear partidas; si es el rival elegido
+   * quien ha terminado, se avisa antes de intentarlo.
+   */
+  function renderEstadoTorneo() {
+    const estado = estadoJugadorTorneo(nombreActual());
+    const rival = el.rivalName ? el.rivalName.value.trim() : '';
+    const estadoRival = estadoJugadorTorneo(rival);
+
+    let texto = '';
+    if (estado && estado.terminado) {
+      texto = '🏁 Ya has terminado el torneo: has jugado las dos partidas contra todos los rivales.';
+    } else if (estadoRival && estadoRival.terminado) {
+      texto = `🏁 ${rival} ya ha terminado el torneo: no puedes crear otra partida contra él.`;
+    }
+
+    if (el.torneoEstado) {
+      el.torneoEstado.textContent = texto;
+      el.torneoEstado.hidden = !texto;
+    }
+    refitCreateBtn();
+  }
+
+  /*
    * Rellena los tres desplegables del lobby conservando lo que ya estaba
    * elegido. La lista llega del servidor, así que un jugador añadido por el
    * administrador aparece sin recargar la página.
@@ -2169,11 +2226,18 @@
   async function loadTorneoInfo() {
     try {
       const res = await fetch('/api/tournament');
-      if (!res.ok) return null;
+      if (!res.ok) {
+        ultimoTorneo = null;
+        return null;
+      }
       const data = await res.json();
-      return data && data.ok ? data : null;
+      ultimoTorneo = data && data.ok ? data : null;
+      return ultimoTorneo;
     } catch (error) {
+      ultimoTorneo = null;
       return null;
+    } finally {
+      renderEstadoTorneo();
     }
   }
 
@@ -2274,15 +2338,28 @@
       const tbody = document.createElement('tbody');
       for (const fila of filas) {
         const tr = document.createElement('tr');
-        const celdas = [
-          fila.nombre,
+
+        // La celda del nombre lleva la marca de torneo terminado, si toca.
+        const celdaNombre = document.createElement('td');
+        celdaNombre.textContent = fila.nombre;
+        const estado = estadoJugadorTorneo(fila.nombre);
+        if (estado && estado.terminado) {
+          const fin = document.createElement('span');
+          fin.className = 'torneo-fin';
+          fin.textContent = '🏁 Torneo terminado';
+          celdaNombre.appendChild(document.createElement('br'));
+          celdaNombre.appendChild(fin);
+        }
+        tr.appendChild(celdaNombre);
+
+        const resto = [
           fila.rating,
           fila.partidas,
           fila.victorias,
           fila.empates,
           fila.derrotas
         ];
-        for (const valor of celdas) {
+        for (const valor of resto) {
           const td = document.createElement('td');
           td.textContent = String(valor);
           tr.appendChild(td);
@@ -2758,11 +2835,12 @@
   el.playerName.addEventListener('change', () => {
     sincronizarNombre(el.playerName.value.trim());
     if (el.gameScreen.hidden) loadPartidasAbiertas();
+    renderEstadoTorneo();
   });
 
   el.rivalName.addEventListener('change', () => {
-    const name = el.rivalName.value.trim();
-    el.createBtn.disabled = !name;
+    // Habilita el botón y avisa si el rival ya terminó el torneo.
+    renderEstadoTorneo();
   });
 
   el.joinName.addEventListener('change', () => {
@@ -2915,6 +2993,7 @@
       if (!savedName || !nombres.includes(savedName)) return;
       el.playerName.value = savedName;
       el.joinName.value = savedName;
+      renderEstadoTorneo();
     });
 
     setupAdmin();

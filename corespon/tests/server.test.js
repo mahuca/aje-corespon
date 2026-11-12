@@ -292,6 +292,151 @@ test('api: invitar dos veces devuelve la misma partida abierta', async (t) => {
   assert.equal(second.existing, true);
 });
 
+test('invitación: una pareja con dos partidas no puede crear una tercera', async (t) => {
+  const store = createMemoryStore();
+  const { instance, base } = await boot(store);
+  t.after(() => cleanup(instance));
+
+  // Ida y vuelta ya jugadas: la pareja está completa.
+  for (const [blancas, negras, resultado] of [
+    ['Manuel', 'Fernan', 'blancas'],
+    ['Fernan', 'Manuel', 'tablas']
+  ]) {
+    await store.saveResultado({
+      blancas, negras, resultado,
+      terminoPor: 'renuncia',
+      terminadoEn: new Date().toISOString()
+    });
+  }
+
+  const response = await fetch(base + '/api/partidas/invitar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jugador: 'Manuel', rival: 'Fernan', color: 'white', pin: TEST_PIN })
+  });
+  const data = await response.json();
+
+  assert.equal(response.status, 409);
+  assert.equal(data.error, 'pareja_completa');
+  assert.equal((await store.getPartidasAbiertas()).length, 0);
+});
+
+test('invitación: con una sola partida jugada se sigue reutilizando la vuelta', async (t) => {
+  const store = createMemoryStore();
+  const { instance, base } = await boot(store);
+  t.after(() => cleanup(instance));
+
+  await store.saveResultado({
+    blancas: 'Manuel', negras: 'Fernan', resultado: 'blancas',
+    terminoPor: 'renuncia', terminadoEn: new Date().toISOString()
+  });
+
+  const vuelta = await fetch(base + '/api/admin/vueltas', { method: 'POST' })
+    .then(r => r.json());
+  assert.equal(vuelta.total, 1);
+
+  const response = await fetch(base + '/api/partidas/invitar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jugador: 'Manuel', rival: 'Fernan', color: 'white', pin: TEST_PIN })
+  });
+  const data = await response.json();
+
+  assert.equal(data.ok, true);
+  assert.equal(data.existing, true);
+  assert.equal(data.room.code, vuelta.creadas[0].code);
+});
+
+test('invitación: un jugador con el torneo terminado no puede crear', async (t) => {
+  const store = createMemoryStore();
+  const { instance, base } = await boot(store);
+  t.after(() => cleanup(instance));
+
+  // Solo quedan activos Manuel y Fernan; con sus dos partidas Manuel termina.
+  for (const rival of ['Alberto', 'Alvaro', 'Alejandro', 'Abuelo']) {
+    await store.setPlayerActiva(rival.toLowerCase(), false);
+  }
+  for (const resultado of ['blancas', 'negras']) {
+    await store.saveResultado({
+      blancas: 'Manuel', negras: 'Fernan', resultado,
+      terminoPor: 'renuncia', terminadoEn: new Date().toISOString()
+    });
+  }
+
+  const response = await fetch(base + '/api/partidas/invitar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jugador: 'Manuel', rival: 'Fernan', color: 'white', pin: TEST_PIN })
+  });
+  const data = await response.json();
+
+  assert.equal(response.status, 409);
+  assert.equal(data.error, 'torneo_terminado');
+});
+
+test('invitación: no se puede crear contra un rival que terminó el torneo', async (t) => {
+  const store = createMemoryStore();
+  const { instance, base } = await boot(store);
+  t.after(() => cleanup(instance));
+
+  for (const rival of ['Alvaro', 'Alejandro', 'Abuelo']) {
+    await store.setPlayerActiva(rival.toLowerCase(), false);
+  }
+  // Activos: Manuel, Fernan y Alberto. Manuel termina sus dos parejas;
+  // a Alberto aún le falta la de Fernan.
+  for (const pareja of [['Manuel', 'Fernan'], ['Manuel', 'Alberto']]) {
+    for (const resultado of ['blancas', 'negras']) {
+      await store.saveResultado({
+        blancas: pareja[0], negras: pareja[1], resultado,
+        terminoPor: 'renuncia', terminadoEn: new Date().toISOString()
+      });
+    }
+  }
+
+  const response = await fetch(base + '/api/partidas/invitar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jugador: 'Alberto', rival: 'Manuel', color: 'white', pin: TEST_PIN })
+  });
+  const data = await response.json();
+
+  assert.equal(response.status, 409);
+  assert.equal(data.error, 'rival_torneo_terminado');
+  assert.equal(data.jugador, 'Manuel');
+});
+
+test('torneo: el resumen marca quién ha terminado y a quién le falta', async (t) => {
+  const store = createMemoryStore();
+  const { instance, base } = await boot(store);
+  t.after(() => cleanup(instance));
+
+  for (const rival of ['Alvaro', 'Alejandro', 'Abuelo']) {
+    await store.setPlayerActiva(rival.toLowerCase(), false);
+  }
+  for (const pareja of [['Manuel', 'Fernan'], ['Manuel', 'Alberto']]) {
+    for (const resultado of ['blancas', 'negras']) {
+      await store.saveResultado({
+        blancas: pareja[0], negras: pareja[1], resultado,
+        terminoPor: 'renuncia', terminadoEn: new Date().toISOString()
+      });
+    }
+  }
+
+  const data = await fetch(base + '/api/tournament').then(r => r.json());
+  assert.equal(data.ok, true);
+
+  const manuel = data.jugadores.find(j => j.nombre === 'Manuel');
+  const alberto = data.jugadores.find(j => j.nombre === 'Alberto');
+
+  assert.equal(manuel.terminado, true);
+  assert.equal(manuel.parejasCompletas, 2);
+  assert.equal(manuel.parejasPendientes, 0);
+  assert.equal(alberto.terminado, false);
+  assert.equal(alberto.parejasPendientes, 1);
+  // Los jugadores de baja no cuentan como pareja pendiente.
+  assert.equal(data.jugadores.some(j => j.nombre === 'Alvaro'), false);
+});
+
 test('resultados: rendirse guarda el resultado, la clasificación y la vuelta', async (t) => {
   const { instance, store, port, base } = await boot();
   t.after(() => cleanup(instance));

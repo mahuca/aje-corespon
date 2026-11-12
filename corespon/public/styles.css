@@ -1437,6 +1437,29 @@ body.is-spectator .square { cursor: default; }
   line-height: 1.5;
 }
 
+/* Aviso de torneo terminado en el formulario y en la clasificación. */
+.torneo-estado {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+.torneo-fin {
+  display: inline-block;
+  margin-top: 3px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 0.68rem;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
 /* ==================== SECCIONES LOBBY ==================== */
 #partidasSection, #clasificacionSection { margin-top: 36px; }
 #partidasSection h2, #clasificacionSection h2 {
