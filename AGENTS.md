@@ -48,6 +48,7 @@
 
 - **Vuelta automática**: al terminar la primera partida de una pareja (mate, rendición, tiempo o tablas) la **misma sala** se reinicia con los colores cambiados. Nadie acepta nada y **no hay tercera partida**. Lógica: `crearVuelta()` (`server.js`), `Room.iniciarVuelta()` y bandera `vueltaCreada` (`rooms.js`).
 - Guardia contra duplicados: la vuelta solo se crea si la pareja tiene 1 resultado, 0 partidas abiertas y ambos jugadores activos.
+- **Máximo 2 partidas por pareja**: `POST /api/partidas/invitar` es el único camino para crear salas a mano. Rechaza con 409 `pareja_completa` si la pareja ya tiene 2 resultados, `torneo_terminado` si el creador ya jugó sus 2 partidas contra todos los activos y `rival_torneo_terminado` si es el rival. La comprobación va **antes** de reutilizar una sala abierta. `/api/tournament` devuelve por jugador `parejasCompletas`, `parejasPendientes` y `terminado`; el lobby avisa y deshabilita «Crear partida».
 - `Abandonar` = rendición; `Partidas` = volver a la lista sin rendirse; cerrar pestaña = partida guardada. En el servidor, `corespon:leave` con `resign:false` solo desconecta el asiento.
 - Un jugador puede tener **varias partidas abiertas** a la vez, pero el cliente guarda **una sola sesión** (`ajeCoresponSession_v1`): la última sala abierta.
 - El plazo de 2 días **empieza cuando ambos han entrado**, no al crear la sala. Hay 1 h de gracia y hasta 3 prórrogas de 1 día.
