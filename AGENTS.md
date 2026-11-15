@@ -10,7 +10,7 @@
 | Instalar | `npm install` |
 | Servidor | `npm start` → `http://localhost:3001/corespon` |
 | Auto-reload | `npm run dev` |
-| Tests (128) | `npm test` |
+| Tests (138) | `npm test` |
 | Un solo test | `cd corespon && node --test --test-name-pattern="vuelta" tests/server.test.js` |
 | Crear roster en Postgres | `npm run init-db` (opcional: se crea solo al arrancar) |
 | Liveness / readiness | `curl /healthz` (no toca BD) · `curl /api/status` (sí toca BD) |
@@ -40,7 +40,7 @@
 | `PIN_PEPPER` | Sal del hash de claves. Cambiarla invalida **todas** las claves existentes. |
 | `BASE_URL` / `TZ` | Enlaces de los mensajes / `Europe/Madrid`. |
 
-- Endpoints admin: `GET /api/whatsapp/queue`, `GET/POST/PATCH /api/tournament/players`, `POST /api/admin/rotate-seats`, `POST /api/admin/vueltas`, `POST /api/admin/partidas-pendientes`, `GET/POST /api/admin/enrollment`.
+- Endpoints admin: `GET /api/whatsapp/queue`, `GET/POST/PATCH /api/tournament/players`, `POST /api/admin/rotate-seats`, `POST /api/admin/vueltas`, `POST /api/admin/partidas-pendientes`, `GET/POST /api/admin/enrollment`, `GET /api/admin/stats`, `GET /api/admin/rooms`, `DELETE /api/admin/whatsqueue/clean`.
 - `Abuelo` es admin **de aplicación** (`ADMINISTRADORES` en `server.js`), distinto del `ADMIN_TOKEN` de entorno.
 - Este servicio usa tablas `corespon_*` en la **misma BD que `ajedrez-online`**: no tocar las tablas `torneo_*`.
 

@@ -2050,3 +2050,104 @@ test('notificaciones: el fin de partida incluye el rating', async (t) => {
     assert.match(notif.texto, /Fernan 1475/);
   }
 });
+
+// ============================ PANEL DE ADMIN (Fase F3) ============================
+
+test('admin: las estadísticas devuelven el resumen y la clasificación', async (t) => {
+  const store = createMemoryStore();
+  const { instance, base } = await boot(store);
+  t.after(() => cleanup(instance));
+
+  const stats = await fetch(base + '/api/admin/stats').then(r => r.json());
+  assert.equal(stats.ok, true);
+  assert.ok(stats.generadoEn);
+  assert.equal(typeof stats.resumen.partidasAbiertas, 'number');
+  assert.equal(stats.resumen.jugadoresActivos, 6);
+  assert.equal(stats.resumen.jugadoresTotales, 6);
+  assert.deepEqual(stats.notificaciones, { pendiente: 0, enviado: 0, fallido: 0 });
+  assert.equal(stats.clasificacion.length, 6);
+  assert.ok(stats.clasificacion.every(c => c.rating === 1500));
+});
+
+test('admin: las salas activas listan jugadores, turno y plazo', async (t) => {
+  const store = createMemoryStore();
+  const { instance, base } = await boot(store);
+  t.after(() => cleanup(instance));
+
+  const { room } = await invite(base);
+
+  const data = await fetch(base + '/api/admin/rooms').then(r => r.json());
+  assert.equal(data.ok, true);
+  assert.equal(data.total, 1);
+
+  const sala = data.salas[0];
+  assert.equal(sala.code, room.code);
+  assert.equal(sala.players.white.name, 'Manuel');
+  assert.equal(sala.players.black.name, 'Fernan');
+  assert.equal(sala.turn, 'white');
+  assert.equal(sala.jugadas, 0);
+  assert.ok(sala.plazo.msRestante > 0);
+  assert.equal(sala.plazo.caducado, false);
+});
+
+test('admin: limpiar la cola borra las fallidas y no acepta pendientes', async (t) => {
+  const store = createMemoryStore();
+  const { instance, base } = await boot(store);
+  t.after(() => cleanup(instance));
+
+  // Una pendiente (nunca se intentó) y una fallida cerrada hace un rato.
+  await store.addNotificacion({ tipo: 'turno', texto: 'pendiente' });
+  await store.addNotificacion({ tipo: 'turno', texto: 'fallida' });
+  const pendiente = (await store.getNotificacionesRecientes(10))
+    .find(n => n.texto === 'pendiente');
+  const fallida = (await store.getNotificacionesRecientes(10))
+    .find(n => n.texto === 'fallida');
+  await store.marcaNotificacionComoEnviada(fallida.id, 'fallo de prueba', null);
+  assert.equal((await store.resumenNotificaciones()).fallido, 1);
+
+  // No se puede limpiar la cola de pendientes.
+  const malo = await fetch(base + '/api/admin/whatsqueue/clean?estado=pendiente', {
+    method: 'DELETE'
+  });
+  assert.equal(malo.status, 400);
+
+  // Sin filtro de fecha borra la fallida y deja la pendiente.
+  const limpio = await fetch(base + '/api/admin/whatsqueue/clean?estado=fallido&dias=0', {
+    method: 'DELETE'
+  });
+  assert.equal(limpio.status, 200);
+  const resultado = await limpio.json();
+  assert.equal(resultado.borradas, 1);
+
+  const restantes = await store.getNotificacionesRecientes(10);
+  assert.equal(restantes.length, 1);
+  assert.equal(restantes[0].id, pendiente.id);
+});
+
+test('admin: las rutas nuevas exigen token cuando está definido', async (t) => {
+  const previo = process.env.ADMIN_TOKEN;
+  process.env.ADMIN_TOKEN = 'secreto-de-prueba';
+  t.after(() => {
+    if (previo === undefined) delete process.env.ADMIN_TOKEN;
+    else process.env.ADMIN_TOKEN = previo;
+  });
+
+  const store = createMemoryStore();
+  const { instance, base } = await boot(store);
+  t.after(() => cleanup(instance));
+
+  for (const [metodo, ruta] of [
+    ['GET', '/api/admin/stats'],
+    ['GET', '/api/admin/rooms'],
+    ['DELETE', '/api/admin/whatsqueue/clean?dias=0']
+  ]) {
+    const sinToken = await fetch(base + ruta, { method: metodo });
+    assert.equal(sinToken.status, 401, `${metodo} ${ruta} debe exigir token`);
+
+    const conToken = await fetch(base + ruta, {
+      method: metodo,
+      headers: { 'x-admin-token': 'secreto-de-prueba' }
+    });
+    assert.equal(conToken.status, 200, `${metodo} ${ruta} debe aceptar el token`);
+  }
+});

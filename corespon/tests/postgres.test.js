@@ -293,3 +293,43 @@ test('postgres: cola de notificaciones con reintentos', async () => {
 
   await store.close();
 });
+
+test('postgres: limpiar notificaciones cerradas', async () => {
+  const { store } = crearStore();
+
+  const pendiente = await store.addNotificacion({ tipo: 'turno', texto: 'pendiente' });
+  const enviada = await store.addNotificacion({ tipo: 'turno', texto: 'enviada' });
+  const fallida = await store.addNotificacion({ tipo: 'fin', texto: 'fallida' });
+
+  await store.marcaNotificacionComoEnviada(enviada.id, null);
+  await store.marcaNotificacionComoEnviada(fallida.id, 'telegram caido');
+
+  // Borra solo la fallida y respeta la pendiente.
+  const borradas = await store.limpiarNotificaciones({ estado: 'fallido', antesDeMs: null });
+  assert.equal(borradas, 1);
+
+  const restantes = await store.getNotificacionesRecientes(10);
+  assert.deepEqual(
+    restantes.map(n => n.id).sort((a, b) => a - b),
+    [pendiente.id, enviada.id]
+  );
+
+  // La enviada es demasiado reciente para el corte: no se borra.
+  const ninguna = await store.limpiarNotificaciones({
+    estado: 'enviado', antesDeMs: Date.now() - 60000
+  });
+  assert.equal(ninguna, 0);
+
+  // Con un corte en el futuro sí entra.
+  const vieja = await store.limpiarNotificaciones({
+    estado: 'enviado', antesDeMs: Date.now() + 60000
+  });
+  assert.equal(vieja, 1);
+
+  // La pendiente sigue ahí: nunca se limpia.
+  const quedan = await store.getNotificacionesRecientes(10);
+  assert.equal(quedan.length, 1);
+  assert.equal(quedan[0].id, pendiente.id);
+
+  await store.close();
+});

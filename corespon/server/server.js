@@ -1333,6 +1333,125 @@ function createServer(options = {}) {
   });
 
   /*
+   * Limpia notificaciones cerradas del registro. Por defecto borra las
+   * 'fallido' con más de 7 días. Nunca borra 'pendiente' (se perderían avisos
+   * en cola).
+   *   ?estado=fallido|enviado   (por defecto: fallido)
+   *   ?dias=7                   (por defecto: 7; 0 = sin filtro de fecha)
+   */
+  app.delete('/api/admin/whatsqueue/clean', async (req, res) => {
+    try {
+      if (!esAdmin(req)) return res.status(401).json({ ok: false, error: 'No autorizado' });
+
+      const estado = String(req.query.estado || 'fallido').toLowerCase();
+      if (!['fallido', 'enviado'].includes(estado)) {
+        return res.status(400).json({ ok: false, error: 'estado_invalido' });
+      }
+      const dias = req.query.dias === undefined ? 7 : Number(req.query.dias);
+      if (!Number.isFinite(dias) || dias < 0) {
+        return res.status(400).json({ ok: false, error: 'dias_invalido' });
+      }
+      const antesDeMs = dias === 0 ? null : Date.now() - dias * 24 * 60 * 60 * 1000;
+
+      const borradas = await store.limpiarNotificaciones({ estado, antesDeMs });
+      log(`Notificaciones limpiadas: ${borradas} (${estado}, ${dias} días)`);
+      res.json({ ok: true, borradas, estado, dias });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  /*
+   * Estadísticas para el panel de admin: números globales, ranking completo y
+   * actividad por jugador, además del desglose de la cola de notificaciones.
+   */
+  app.get('/api/admin/stats', async (req, res) => {
+    try {
+      if (!esAdmin(req)) return res.status(401).json({ ok: false, error: 'No autorizado' });
+
+      const [basicas, resumen, jugadores, resultados] = await Promise.all([
+        store.obtenerEstadisticas(),
+        store.resumenNotificaciones(),
+        store.getPlayers(),
+        store.getResultados()
+      ]);
+
+      const activos = jugadores.filter(j => j.activa);
+      const clasificacion = computeClassification(resultados, activos).map(c => ({
+        nombre: c.nombre,
+        rating: c.rating,
+        partidas: c.partidas,
+        victorias: c.victorias,
+        empates: c.empates,
+        derrotas: c.derrotas
+      }));
+
+      res.json({
+        ok: true,
+        generadoEn: new Date().toISOString(),
+        resumen: {
+          ...basicas,
+          jugadoresActivos: activos.length,
+          jugadoresTotales: jugadores.length,
+          partidasTerminadas: resultados.length
+        },
+        notificaciones: resumen,
+        clasificacion
+      });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  /*
+   * Salas activas (en memoria) para el panel de admin: jugadores, turno,
+   * plazo restante y estado. No expone tokens ni PIN.
+   */
+  app.get('/api/admin/rooms', async (req, res) => {
+    try {
+      if (!esAdmin(req)) return res.status(401).json({ ok: false, error: 'No autorizado' });
+
+      const ahora = Date.now();
+      const salas = rooms.all().map(room => {
+        const plazo = room.plazoInfo(ahora);
+        const jugador = (color) => room.players[color].name
+          ? {
+              name: room.players[color].name,
+              connected: room.players[color].connected,
+              joined: !!room.players[color].token
+            }
+          : null;
+
+        return {
+          code: room.code,
+          parentCode: room.parentCode,
+          turn: room.turnColor(),
+          status: room.status,
+          players: { white: jugador('white'), black: jugador('black') },
+          jugadas: room.history.length,
+          espectadores: room.spectators.size,
+          drawOffer: room.drawOffer,
+          prorrogas: room.plazos.prorrogas.length,
+          creadoEn: room.plazos.creadoEn,
+          plazo: {
+            plazoHasta: room.plazos.plazoHasta,
+            graciaHasta: room.plazos.graciaHasta,
+            msRestante: plazo.msPlazo,
+            msGracia: plazo.msGracia,
+            texto: plazo.texto,
+            caducado: ahora >= room.plazos.plazoHasta
+          },
+          timing: { white: room.timing.white, black: room.timing.black }
+        };
+      });
+
+      res.json({ ok: true, total: salas.length, salas });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  /*
    * Estado del alta de claves personales: si está abierta, hasta cuándo, y
    * cuántos jugadores siguen sin clave.
    */

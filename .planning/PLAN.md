@@ -98,6 +98,14 @@ Verificación: `npm test` (77 pruebas, incluidas las de PostgreSQL con pg-mem).
 - **Revanchas:** en la misma sala, con intercambio de colores.
 - **Estado:** vanilla JS/HTML + Socket.IO, sin cuentas de usuario.
 
+---
+
+## Fase F — Mejora de herramientas de admin (completada)
+
+- [x] F3.1. Endpoint para limpiar notificaciones antiguas: `DELETE /api/admin/whatsqueue/clean` — borrar notificaciones con estado `fallido` viejas o todas las de más de X días. Evita que la tabla `corespon_notificaciones` crezca infinito.
+- [x] F3.2. Endpoint para exportar estadísticas: `GET /api/admin/stats` — devolver estadísticas completas: número total de partidas, ranking, actividad por jugador, cuota de notificaciones por estado (pendiente/enviado/fallido).
+- [x] F3.4. Listado completo de salas activas: `GET /api/admin/rooms` — devolver información de todas las salas actuales (jugadores conectados, turno, plazo restante, etc.) para el panel de admin.
+
 ## Cómo ejecutar
 
 ```bash

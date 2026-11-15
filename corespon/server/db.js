@@ -427,6 +427,25 @@ function createMemoryStore() {
     },
 
     /*
+     * Borra notificaciones ya cerradas. No acepta 'pendiente': esas todavía
+     * tienen un aviso por enviar y se perderían.
+     */
+    async limpiarNotificaciones({ estado = 'fallido', antesDeMs = null } = {}) {
+      let borradas = 0;
+      for (let i = notificaciones.length - 1; i >= 0; i--) {
+        const n = notificaciones[i];
+        if (n.estado !== estado) continue;
+        if (antesDeMs) {
+          const cuando = n.enviadoEn || n.ultimoIntento;
+          if (!cuando || Date.parse(cuando) >= antesDeMs) continue;
+        }
+        notificaciones.splice(i, 1);
+        borradas += 1;
+      }
+      return borradas;
+    },
+
+    /*
      * Registra el resultado de un intento. Sin error -> enviado; con error y
      * `proximoIntento` -> sigue pendiente (backoff); con error y sin fecha ->
      * fallido definitivo. Devuelve la notificación actualizada.
@@ -820,6 +839,29 @@ function createPostgresStore(connectionString, options = {}) {
         if (resumen[row.estado] !== undefined) resumen[row.estado] = row.total;
       }
       return resumen;
+    },
+
+    /*
+     * Borra notificaciones ya cerradas. No acepta 'pendiente': esas todavía
+     * tienen un aviso por enviar y se perderían. La antigüedad se mide con
+     * `enviado_en` (se rellena al marcarlas) y, como respaldo, `ultimo_intento`.
+     */
+    async limpiarNotificaciones({ estado = 'fallido', antesDeMs = null } = {}) {
+      await init();
+      const { rows } = antesDeMs
+        ? await pool.query(
+            `DELETE FROM corespon_notificaciones
+              WHERE estado = $1
+                AND COALESCE(enviado_en, ultimo_intento) IS NOT NULL
+                AND COALESCE(enviado_en, ultimo_intento) < $2::timestamptz
+            RETURNING id`,
+            [estado, new Date(antesDeMs).toISOString()]
+          )
+        : await pool.query(
+            `DELETE FROM corespon_notificaciones WHERE estado = $1 RETURNING id`,
+            [estado]
+          );
+      return rows.length;
     },
 
     async marcaNotificacionComoEnviada(id, error = null, proximoIntento = null) {
