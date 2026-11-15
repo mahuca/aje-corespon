@@ -71,7 +71,11 @@ const MESSAGES = {
   tablas:
     '🤝 *${jugador}, te proponen tablas*\n\n${rival} propone tablas en la ' +
     'partida ${code}. Si estás de acuerdo, entra y pulsa *Aceptar tablas*.\n\n' +
-    'Entra a la partida: ${host}/corespon/${code}'
+    'Entra a la partida: ${host}/corespon/${code}',
+
+  prueba:
+    '✅ *Prueba de avisos de Aje-Corespon*\n\nSi ves este mensaje, el bot ' +
+    'puede enviar avisos al chat configurado. Hora: ${fecha}.'
 };
 
 // ============================ TELEGRAM ============================

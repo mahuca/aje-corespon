@@ -443,6 +443,7 @@ input:focus {
   color: var(--muted);
 }
 .admin-enrollment.abierta { color: var(--ok); }
+.admin-enrollment.fallo { color: var(--danger); }
 
 .admin-enrollment-buttons {
   display: flex;

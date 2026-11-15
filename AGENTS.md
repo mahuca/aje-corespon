@@ -40,7 +40,7 @@
 | `PIN_PEPPER` | Sal del hash de claves. Cambiarla invalida **todas** las claves existentes. |
 | `BASE_URL` / `TZ` | Enlaces de los mensajes / `Europe/Madrid`. |
 
-- Endpoints admin: `GET /api/whatsapp/queue`, `GET/POST/PATCH /api/tournament/players`, `POST /api/admin/rotate-seats`, `POST /api/admin/vueltas`, `POST /api/admin/partidas-pendientes`, `GET/POST /api/admin/enrollment`, `GET /api/admin/stats`, `GET /api/admin/rooms`, `DELETE /api/admin/whatsqueue/clean`.
+- Endpoints admin: `GET /api/whatsapp/queue`, `GET/POST/PATCH /api/tournament/players`, `POST /api/admin/rotate-seats`, `POST /api/admin/vueltas`, `POST /api/admin/partidas-pendientes`, `GET/POST /api/admin/enrollment`, `GET /api/admin/stats`, `GET /api/admin/rooms`, `DELETE /api/admin/whatsqueue/clean`, `POST /api/admin/notify-test`, `GET /api/admin/notify-status`.
 - `Abuelo` es admin **de aplicación** (`ADMINISTRADORES` en `server.js`), distinto del `ADMIN_TOKEN` de entorno.
 - Este servicio usa tablas `corespon_*` en la **misma BD que `ajedrez-online`**: no tocar las tablas `torneo_*`.
 

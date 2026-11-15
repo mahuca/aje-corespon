@@ -753,6 +753,89 @@ test('api: la cola exige el token de administración si está definido', async (
   assert.equal(data.ok, true);
 });
 
+test('admin: el aviso de prueba envía y el estado resume los fallos', async (t) => {
+  const store = createMemoryStore();
+  const enviados = [];
+  let fallar = false;
+  const gateway = new WhatsAppGateway({
+    store,
+    providerName: 'fake',
+    // Sin reintentos: un fallo queda 'fallido' en la primera pasada.
+    retryDelaysMs: [],
+    provider: async (text, destino) => {
+      if (fallar) throw new Error('Telegram error 403: Forbidden: the group chat was deleted');
+      enviados.push({ text, destino });
+      return { id: 'mensaje' };
+    }
+  });
+
+  const { instance, base } = await boot(store, { gateway });
+  t.after(() => cleanup(instance));
+
+  // Prueba inmediata: no pasa por la cola y usa el grupo si no hay jugador.
+  const prueba = await fetch(base + '/api/admin/notify-test', { method: 'POST' })
+    .then(r => r.json());
+  assert.equal(prueba.ok, true);
+  assert.equal(prueba.proveedor, 'fake');
+  assert.equal(prueba.destino, 'grupo');
+  assert.equal(enviados.length, 1);
+  assert.match(enviados[0].text, /Prueba de avisos/);
+
+  // Un envío correcto de la cola deja registrado el "último enviado".
+  await gateway.enqueue('TEST00', 'turno', { nombre: 'Manuel' },
+    { code: 'TEST00', tiempo: '1 h', host: 'http://localhost' });
+  await gateway.processQueue(10);
+
+  // Un fallo del proveedor se refleja en el estado del panel.
+  fallar = true;
+  await gateway.enqueue('TEST01', 'turno', { nombre: 'Manuel' },
+    { code: 'TEST01', tiempo: '1 h', host: 'http://localhost' });
+  await gateway.processQueue(10);
+
+  const estado = await fetch(base + '/api/admin/notify-status').then(r => r.json());
+  assert.equal(estado.ok, true);
+  assert.equal(estado.configurado, true);
+  assert.equal(estado.fallos24h, 1);
+  assert.equal(estado.resumen.fallido, 1);
+  assert.match(estado.ultimoFallo.error, /group chat was deleted/);
+  assert.equal(estado.ultimoFallo.jugador, 'Manuel');
+  assert.ok(estado.ultimaEnviada, 'debe recordar el último envío correcto');
+});
+
+test('admin: el aviso de prueba y su estado exigen token si está definido', async (t) => {
+  const previo = process.env.ADMIN_TOKEN;
+  process.env.ADMIN_TOKEN = 'secreto-de-prueba';
+  t.after(() => {
+    if (previo === undefined) delete process.env.ADMIN_TOKEN;
+    else process.env.ADMIN_TOKEN = previo;
+  });
+
+  const store = createMemoryStore();
+  const gateway = new WhatsAppGateway({
+    store, providerName: 'fake', provider: async () => ({ id: 'x' })
+  });
+  const { instance, base } = await boot(store, { gateway });
+  t.after(() => cleanup(instance));
+
+  const pruebaSin = await fetch(base + '/api/admin/notify-test', { method: 'POST' });
+  assert.equal(pruebaSin.status, 401);
+
+  const estadoSin = await fetch(base + '/api/admin/notify-status');
+  assert.equal(estadoSin.status, 401);
+
+  const pruebaCon = await fetch(base + '/api/admin/notify-test', {
+    method: 'POST',
+    headers: { 'x-admin-token': 'secreto-de-prueba' }
+  });
+  assert.equal(pruebaCon.status, 200);
+
+  const estadoCon = await fetch(base + '/api/admin/notify-status', {
+    headers: { 'x-admin-token': 'secreto-de-prueba' }
+  });
+  const data = await estadoCon.json();
+  assert.equal(data.ok, true);
+});
+
 test('torneo: con los 6 jugadores por defecto son 30 partidas', async (t) => {
   const { instance, base } = await boot();
   t.after(() => cleanup(instance));

@@ -427,6 +427,20 @@ function createMemoryStore() {
     },
 
     /*
+     * Cuenta notificaciones de un estado desde una fecha (ISO). Sirve para
+     * saber si los avisos están fallando ahora mismo.
+     */
+    async contarNotificaciones({ estado = null, desde = null } = {}) {
+      const limite = desde ? Date.parse(desde) : null;
+      return notificaciones.filter((n) => {
+        if (estado && n.estado !== estado) return false;
+        if (!limite) return true;
+        const cuando = Date.parse(n.enviadoEn || n.ultimoIntento || '');
+        return Number.isFinite(cuando) && cuando >= limite;
+      }).length;
+    },
+
+    /*
      * Borra notificaciones ya cerradas. No acepta 'pendiente': esas todavía
      * tienen un aviso por enviar y se perderían.
      */
@@ -839,6 +853,23 @@ function createPostgresStore(connectionString, options = {}) {
         if (resumen[row.estado] !== undefined) resumen[row.estado] = row.total;
       }
       return resumen;
+    },
+
+    /*
+     * Cuenta notificaciones de un estado desde una fecha (ISO). Sirve para
+     * saber si los avisos están fallando ahora mismo.
+     */
+    async contarNotificaciones({ estado = null, desde = null } = {}) {
+      await init();
+      const { rows } = await pool.query(
+        `SELECT COUNT(*)::int AS total
+           FROM corespon_notificaciones
+          WHERE ($1::text IS NULL OR estado = $1)
+            AND ($2::timestamptz IS NULL
+                 OR COALESCE(enviado_en, ultimo_intento) >= $2::timestamptz)`,
+        [estado || null, desde ? new Date(desde).toISOString() : null]
+      );
+      return rows[0] ? rows[0].total : 0;
     },
 
     /*

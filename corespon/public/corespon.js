@@ -139,6 +139,8 @@
     adminEnroll2Btn: document.getElementById('adminEnroll2Btn'),
     adminEnroll24Btn: document.getElementById('adminEnroll24Btn'),
     adminEnrollCloseBtn: document.getElementById('adminEnrollCloseBtn'),
+    adminNotifyState: document.getElementById('adminNotifyState'),
+    adminNotifyTestBtn: document.getElementById('adminNotifyTestBtn'),
     plazoCard: document.getElementById('plazoCard'),
     plazoIcon: document.getElementById('plazoIcon'),
     plazoStatus: document.getElementById('plazoStatus'),
@@ -1831,6 +1833,114 @@
     }
   }
 
+  /*
+   * Estado de los avisos: último enviado, último fallo y fallos de las
+   * últimas 24 h. El error de Telegram se enseña tal cual para poder actuar.
+   */
+  async function loadNotifyStatus() {
+    if (!el.adminNotifyState) return;
+
+    try {
+      const { res, data } = await peticionAdmin('/api/admin/notify-status');
+
+      if (res.status === 401) {
+        el.adminNotifyState.textContent = 'Pega el token para ver el estado.';
+        el.adminNotifyState.classList.remove('abierta', 'fallo');
+        return;
+      }
+      if (!data || !data.ok) {
+        el.adminNotifyState.textContent = 'No se pudo consultar el estado de los avisos.';
+        el.adminNotifyState.classList.remove('abierta', 'fallo');
+        return;
+      }
+
+      const fecha = (iso) => {
+        if (!iso) return 'sin datos';
+        try {
+          return new Date(iso).toLocaleString('es-ES', {
+            timeZone: 'Europe/Madrid', dateStyle: 'short', timeStyle: 'short'
+          });
+        } catch (error) {
+          return iso;
+        }
+      };
+
+      const fallo = data.ultimoFallo;
+      const ok = data.ultimaEnviada;
+      const falloVigente = !!fallo && (
+        !ok || !Number.isFinite(Date.parse(ok.enviadoEn || ''))
+        || Date.parse(fallo.enviadoEn || '') > Date.parse(ok.enviadoEn || '')
+      );
+
+      if (falloVigente) {
+        el.adminNotifyState.textContent = '⚠️ Último aviso fallido (' + fecha(fallo.enviadoEn)
+          + '): ' + (fallo.error || 'error desconocido');
+        el.adminNotifyState.classList.add('fallo');
+        el.adminNotifyState.classList.remove('abierta');
+        return;
+      }
+
+      const partes = [];
+      if (ok) partes.push('último enviado ' + fecha(ok.enviadoEn));
+      partes.push(data.fallos24h + ' fallos en 24 h');
+      if (data.resumen && data.resumen.pendiente) {
+        partes.push(data.resumen.pendiente + ' en cola');
+      }
+
+      el.adminNotifyState.textContent = '✅ ' + data.proveedor
+        + (data.configurado ? '' : ' · sin configurar')
+        + ' · ' + partes.join(' · ');
+      el.adminNotifyState.classList.remove('fallo');
+      el.adminNotifyState.classList.toggle('abierta', !!data.configurado);
+    } catch (error) {
+      el.adminNotifyState.textContent = 'Error de red al consultar los avisos.';
+    }
+  }
+
+  /*
+   * Envía un mensaje de prueba ahora mismo (sin pasar por la cola). Si el
+   * proveedor falla, se ve el error exacto: token inválido, chat_id que ya no
+   * existe, grupo borrado...
+   */
+  async function probarAviso() {
+    if (!el.adminNotifyTestBtn) return;
+
+    el.adminNotifyTestBtn.disabled = true;
+    try {
+      const { res, data } = await peticionAdmin('/api/admin/notify-test', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({})
+      });
+
+      if (res.status === 401) {
+        showAdminStatus('Token incorrecto. Cópialo de Render → Environment → ADMIN_TOKEN.', 'error');
+        return;
+      }
+
+      if (!data || !data.ok) {
+        const error = (data && data.error) || 'No se pudo enviar el aviso de prueba.';
+        showAdminStatus('Aviso de prueba fallido: ' + error, 'error');
+        if (el.adminNotifyState) {
+          el.adminNotifyState.textContent = '⚠️ ' + error;
+          el.adminNotifyState.classList.add('fallo');
+          el.adminNotifyState.classList.remove('abierta');
+        }
+        return;
+      }
+
+      showAdminStatus(
+        'Aviso de prueba enviado (' + data.destino + ', ' + data.proveedor + ').',
+        'ok'
+      );
+      await loadNotifyStatus();
+    } catch (error) {
+      showAdminStatus('Error de red al enviar el aviso de prueba.', 'error');
+    } finally {
+      el.adminNotifyTestBtn.disabled = false;
+    }
+  }
+
   async function rotateSeats() {
     if (!window.confirm(
       '¿Cerrar las sesiones abiertas?\n\n'
@@ -2011,12 +2121,14 @@
       if (abrir) {
         loadAdminPlayers();
         loadEnrollment();
+        loadNotifyStatus();
       }
     });
 
     el.adminToken.addEventListener('change', () => {
       loadAdminPlayers();
       loadEnrollment();
+      loadNotifyStatus();
     });
 
     if (el.adminRotateBtn) el.adminRotateBtn.addEventListener('click', rotateSeats);
@@ -2042,10 +2154,14 @@
       el.adminEnrollCloseBtn.addEventListener('click', () =>
         setEnrollment({ abrir: false }, 'Alta de claves cerrada.'));
     }
+    if (el.adminNotifyTestBtn) {
+      el.adminNotifyTestBtn.addEventListener('click', probarAviso);
+    }
 
     if (!el.adminPanel.hidden) {
       loadAdminPlayers();
       loadEnrollment();
+      loadNotifyStatus();
     }
 
     el.adminForm.addEventListener('submit', async (event) => {

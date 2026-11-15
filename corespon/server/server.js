@@ -793,6 +793,93 @@ function createServer(options = {}) {
     }
   });
 
+  /*
+   * Prueba inmediata del canal de avisos (no pasa por la cola). Devuelve el
+   * error real del proveedor —token, chat_id, grupo borrado— para poder
+   * arreglarlo desde el panel de administración.
+   *   { jugador: "Manuel" }  → usa TELEGRAM_CHAT_MANUEL si está definido;
+   *   sin cuerpo               → usa el grupo común TELEGRAM_CHAT_ID.
+   */
+  app.post('/api/admin/notify-test', async (req, res) => {
+    try {
+      if (!esAdmin(req)) return res.status(401).json({ ok: false, error: 'No autorizado' });
+
+      const nombre = typeof (req.body && req.body.jugador) === 'string'
+        ? req.body.jugador.trim()
+        : '';
+      const host = baseUrl(req);
+      const fecha = new Date().toLocaleString('es-ES', {
+        timeZone: process.env.TZ || 'Europe/Madrid',
+        dateStyle: 'short',
+        timeStyle: 'short'
+      });
+
+      const resultado = await gateway.send(
+        'prueba',
+        { nombre: nombre || null, whatsapp: null },
+        { fecha, host },
+        host
+      );
+
+      if (!resultado.ok) {
+        return res.status(502).json({
+          ok: false,
+          error: resultado.error,
+          proveedor: resultado.provider,
+          destino: nombre || 'grupo'
+        });
+      }
+
+      res.json({
+        ok: true,
+        proveedor: resultado.provider,
+        destino: nombre || 'grupo',
+        tiempoMs: resultado.timeMs
+      });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  /*
+   * Estado de los avisos para el panel: proveedor, si está configurado y
+   * cuándo se envió el último / cuándo falló el último. Así se ve un grupo
+   * borrado o un token caducado sin tener que mirar la base de datos.
+   */
+  app.get('/api/admin/notify-status', async (req, res) => {
+    try {
+      if (!esAdmin(req)) return res.status(401).json({ ok: false, error: 'No autorizado' });
+
+      const desde = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const [resumen, ultimasEnviadas, ultimosFallos, fallos24h] = await Promise.all([
+        store.resumenNotificaciones(),
+        store.getNotificacionesRecientes(1, 'enviado'),
+        store.getNotificacionesRecientes(1, 'fallido'),
+        store.contarNotificaciones({ estado: 'fallido', desde })
+      ]);
+
+      const recorte = (n) => (n ? {
+        tipo: n.tipo,
+        destinatario: n.destinatario,
+        jugador: n.jugador,
+        enviadoEn: n.enviadoEn || n.ultimoIntento || null,
+        error: n.error || null
+      } : null);
+
+      res.json({
+        ok: true,
+        proveedor: gateway.providerName,
+        configurado: !!gateway.ready,
+        resumen,
+        fallos24h,
+        ultimaEnviada: recorte(ultimasEnviadas[0]),
+        ultimoFallo: recorte(ultimosFallos[0])
+      });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
   // Liveness para Render: no toca la base de datos, así una caída de Neon no
   // provoca reinicios en bucle. La readiness real está en /api/status.
   app.get('/healthz', (req, res) => {
