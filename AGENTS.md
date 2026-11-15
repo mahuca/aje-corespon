@@ -78,4 +78,6 @@
 
 - Servicio `aje-corespon`, plan free, región `oregon`: `buildCommand: npm ci --omit=dev`, `startCommand: node server.js`, `healthCheckPath: /healthz`.
 - Variables con `sync: false` en `render.yaml` (`DATABASE_URL`, `ADMIN_TOKEN`, `TELEGRAM_*`) se definen en el panel.
+- **Cambiar una variable de entorno exige un redeploy, no un restart.** `render restart` (y el botón *Restart*) relanzan el **despliegue anterior** con las variables viejas: la app sigue usando el token/`chat_id` previos y parece que el cambio «no se aplica». Hay que guardar desde el panel (lanza deploy solo) o crear un deploy del mismo commit. Se nota porque `uptime` en `/healthz` sigue subiendo igual (un deploy real lo reinicia a 0); el redeploy pasa por `build_in_progress` → `update_in_progress` → `live`. Con la API: `PUT /v1/services/{id}/env-vars/{KEY}` **no** reinicia; hay que `POST /v1/services/{id}/deploys`.
 - Tras desplegar, comprobar `GET /api/status` (`estadisticas` desde Postgres) y que las salas abiertas siguen ahí.
+- Los avisos van al grupo `TELEGRAM_CHAT_ID`; el bot debe ser **miembro** de ese grupo (si sale `403 Forbidden: the group chat was deleted`, casi siempre es que el bot salió del grupo o el `chat_id` apunta a uno viejo). Comprobarlo con `getChatMember` y `getUpdates`, no solo `getChat` (que responde aunque el bot tenga estado `left`).
