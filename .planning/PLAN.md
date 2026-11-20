@@ -3,11 +3,11 @@
 ## Objetivo
 
 Aplicación de ajedrez por correspondencia (2 días por jugada, ampliables),
-con lista fija de jugadores, notificaciones por WhatsApp y clasificación.
+con lista fija de jugadores, notificaciones por Telegram y clasificación.
 
 ## Estado actual
 
-**Fases A y B completadas** — la partida es jugable de punta a punta,
+**Fases A a F completadas** — la partida es jugable de punta a punta,
 sobrevive a recargas y reinicios, guarda resultados y tiene clasificación y
 revancha. El roster fijo son 6 jugadores y **Abuelo es administrador**.
 
@@ -25,7 +25,7 @@ revancha. El roster fijo son 6 jugadores y **Abuelo es administrador**.
 - [x] A6. Carga de `.env` sin dependencias y `BASE_URL` documentada.
 - [x] A7. Tests migrados a `node:test` (40 en verde) + integración con sockets.
 
-Verificación: `npm test` (77 pruebas, incluidas las de PostgreSQL con pg-mem).
+Verificación: `npm test` (140 pruebas, incluidas las de PostgreSQL con pg-mem).
 
 ## Fase B — Resultados, clasificación y revancha (completada)
 
@@ -70,9 +70,9 @@ Verificación: `npm test` (77 pruebas, incluidas las de PostgreSQL con pg-mem).
       la lista sin rendirse (suelta el asiento y la partida sigue). Cerrar la
       pestaña o perder la conexión permite reanudar; al recargar se recupera la
       sesión guardada y se vuelve a entrar automáticamente.
-- [ ] D6. Revocar el token de GitHub que estaba en `.git/config`.
-      Hecho: el remoto ya usa SSH (`git@github.com:mahuca/aje-corespon.git`).
-      Pendiente: revocar el token en GitHub (sigue siendo válido).
+- [x] D6. Revocar el token de GitHub que estaba en `.git/config`. El remoto usa
+      SSH (`git@github.com:mahuca/aje-corespon.git`) y el token fue revocado
+      en GitHub.
 - [x] D7. README con variables, arranque local y despliegue.
 
 ## Fase E — Reglas de negocio pendientes
@@ -109,7 +109,7 @@ Verificación: `npm test` (77 pruebas, incluidas las de PostgreSQL con pg-mem).
 ## Cómo ejecutar
 
 ```bash
-npm test                 # 72 pruebas
+npm test                 # 140 pruebas
 npm start                # http://localhost:3001/corespon
 npm run init-db          # alta de los 6 jugadores (Abuelo administrador)
 ```
