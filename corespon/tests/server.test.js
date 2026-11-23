@@ -2234,3 +2234,56 @@ test('admin: las rutas nuevas exigen token cuando está definido', async (t) => 
     assert.equal(conToken.status, 200, `${metodo} ${ruta} debe aceptar el token`);
   }
 });
+
+test('resultados: sin jugador devuelve 400 y sin partidas una lista vacía', async (t) => {
+  const { instance, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const sinNombre = await fetch(base + '/api/resultados');
+  assert.equal(sinNombre.status, 400);
+
+  const data = await fetch(base + '/api/resultados?jugador=Manuel').then(r => r.json());
+  assert.equal(data.ok, true);
+  assert.deepEqual(data.partidas, []);
+  assert.deepEqual(data.resumen, {
+    total: 0, victorias: 0, tablas: 0, derrotas: 0
+  });
+});
+
+test('resultados: historial desde la perspectiva del jugador, ordenado y sin mayúsculas', async (t) => {
+  const { instance, store, base } = await boot();
+  t.after(() => cleanup(instance));
+
+  const dia = (n) => new Date(Date.UTC(2026, 10, n, 12)).toISOString();
+  await store.saveResultado({
+    blancas: 'Manuel', negras: 'Fernan', resultado: 'blancas', terminadoEn: dia(1)
+  });
+  await store.saveResultado({
+    blancas: 'Alberto', negras: 'Manuel', resultado: 'negras', terminadoEn: dia(2)
+  });
+  await store.saveResultado({
+    blancas: 'Manuel', negras: 'Alvaro', resultado: 'tablas', terminadoEn: dia(3)
+  });
+  await store.saveResultado({
+    blancas: 'Alejandro', negras: 'Manuel', resultado: 'blancas', terminadoEn: dia(4)
+  });
+  // Partida de otros jugadores: no debe aparecer en el historial de Manuel.
+  await store.saveResultado({
+    blancas: 'Fernan', negras: 'Alberto', resultado: 'blancas', terminadoEn: dia(5)
+  });
+
+  const data = await fetch(base + '/api/resultados?jugador=%20manuel%20')
+    .then(r => r.json());
+  assert.equal(data.ok, true);
+  assert.equal(data.jugador, 'manuel');
+  assert.deepEqual(data.resumen, {
+    total: 4, victorias: 2, tablas: 1, derrotas: 1
+  });
+  assert.deepEqual(data.partidas.map(p => [p.rival, p.color, p.resultado]), [
+    ['Alejandro', 'negras', 'derrota'],
+    ['Alvaro', 'blancas', 'tablas'],
+    ['Alberto', 'negras', 'victoria'],
+    ['Fernan', 'blancas', 'victoria']
+  ]);
+  assert.ok(data.partidas.every(p => p.terminadoEn));
+});

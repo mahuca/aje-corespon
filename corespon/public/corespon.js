@@ -27,6 +27,9 @@
   const PROMOTION_NAMES = {
     queen: 'Dama', rook: 'Torre', bishop: 'Alfil', knight: 'Caballo'
   };
+  const RESULTADOS_LABELS = {
+    victoria: 'Victoria', derrota: 'Derrota', tablas: 'Tablas'
+  };
 
   const ERRORS = {
     invalid_code: 'El código debe tener 6 caracteres válidos.',
@@ -152,7 +155,12 @@
     confirmTitle: document.getElementById('confirmTitle'),
     confirmText: document.getElementById('confirmText'),
     confirmOkBtn: document.getElementById('confirmOkBtn'),
-    confirmCancelBtn: document.getElementById('confirmCancelBtn')
+    confirmCancelBtn: document.getElementById('confirmCancelBtn'),
+    resultadosOverlay: document.getElementById('resultadosOverlay'),
+    resultadosTitle: document.getElementById('resultadosTitle'),
+    resultadosResumen: document.getElementById('resultadosResumen'),
+    resultadosContenido: document.getElementById('resultadosContenido'),
+    resultadosCloseBtn: document.getElementById('resultadosCloseBtn')
   };
 
   const squares = [];
@@ -2395,6 +2403,90 @@
     return contenedor;
   }
 
+  /*
+   * Historial de partidas terminadas de un jugador de la clasificación.
+   * Se abre desde el botón de cada fila; el resultado se muestra siempre
+   * desde el punto de vista de ese jugador.
+   */
+  function cerrarResultados() {
+    el.resultadosOverlay.hidden = true;
+    el.resultadosContenido.replaceChildren();
+  }
+
+  async function abrirResultados(nombre) {
+    const jugador = String(nombre || '').trim();
+    if (!jugador) return;
+
+    el.resultadosTitle.textContent = 'Resultados de ' + jugador;
+    el.resultadosResumen.textContent = 'Cargando…';
+    el.resultadosContenido.replaceChildren();
+    el.resultadosOverlay.hidden = false;
+    el.resultadosCloseBtn.focus({ preventScroll: true });
+
+    try {
+      const res = await fetch('/api/resultados?jugador=' + encodeURIComponent(jugador));
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Error al cargar');
+
+      const resumen = data.resumen || {};
+      el.resultadosResumen.textContent = [
+        (resumen.total || 0) + ' partidas',
+        (resumen.victorias || 0) + ' victorias',
+        (resumen.tablas || 0) + ' tablas',
+        (resumen.derrotas || 0) + ' derrotas'
+      ].join(' · ');
+
+      const partidas = Array.isArray(data.partidas) ? data.partidas : [];
+      if (!partidas.length) {
+        const vacio = document.createElement('p');
+        vacio.className = 'empty';
+        vacio.textContent = 'Aún no ha terminado ninguna partida.';
+        el.resultadosContenido.appendChild(vacio);
+        return;
+      }
+
+      const tabla = document.createElement('table');
+      tabla.className = 'resultados-table';
+      const thead = document.createElement('thead');
+      const cabecera = document.createElement('tr');
+      for (const titulo of ['Rival', 'Color', 'Resultado']) {
+        const th = document.createElement('th');
+        th.textContent = titulo;
+        cabecera.appendChild(th);
+      }
+      thead.appendChild(cabecera);
+      tabla.appendChild(thead);
+
+      const tbody = document.createElement('tbody');
+      for (const partida of partidas) {
+        const fila = document.createElement('tr');
+        const celdas = [
+          partida.rival,
+          partida.color === 'negras' ? 'Negras' : 'Blancas',
+          RESULTADOS_LABELS[partida.resultado] || partida.resultado
+        ];
+        for (let i = 0; i < celdas.length; i++) {
+          const td = document.createElement('td');
+          td.textContent = celdas[i];
+          if (i === 2 && RESULTADOS_LABELS[partida.resultado]) {
+            td.className = 'resultado-' + partida.resultado;
+          }
+          fila.appendChild(td);
+        }
+        tbody.appendChild(fila);
+      }
+      tabla.appendChild(tbody);
+      el.resultadosContenido.appendChild(tabla);
+    } catch (error) {
+      console.error('Error cargando resultados:', error);
+      el.resultadosResumen.textContent = 'No se pudo cargar el historial.';
+      const aviso = document.createElement('p');
+      aviso.className = 'empty';
+      aviso.textContent = 'Inténtalo de nuevo en unos segundos.';
+      el.resultadosContenido.appendChild(aviso);
+    }
+  }
+
   async function loadClasificacion() {
     try {
       const [res, torneoInfo] = await Promise.all([
@@ -2434,7 +2526,8 @@
         { label: 'P', titulo: 'Partidas jugadas' },
         { label: 'V', titulo: 'Victorias' },
         { label: 'T', titulo: 'Tablas' },
-        { label: 'D', titulo: 'Derrotas' }
+        { label: 'D', titulo: 'Derrotas' },
+        { label: 'Resultados' }
       ];
       for (const columna of columnas) {
         const th = document.createElement('th');
@@ -2480,6 +2573,17 @@
           td.textContent = String(valor);
           tr.appendChild(td);
         }
+
+        const celdaResultados = document.createElement('td');
+        const botonResultados = document.createElement('button');
+        botonResultados.type = 'button';
+        botonResultados.className = 'btn btn-ghost btn-sm resultados-btn';
+        botonResultados.textContent = 'Resultados';
+        botonResultados.setAttribute('aria-label', 'Ver resultados de ' + fila.nombre);
+        botonResultados.addEventListener('click', () => abrirResultados(fila.nombre));
+        celdaResultados.appendChild(botonResultados);
+        tr.appendChild(celdaResultados);
+
         tbody.appendChild(tr);
       }
       table.appendChild(tbody);
@@ -3012,6 +3116,11 @@
     if (event.target === el.confirmOverlay) responderConfirmacion(false);
   });
 
+  el.resultadosCloseBtn.addEventListener('click', cerrarResultados);
+  el.resultadosOverlay.addEventListener('click', (event) => {
+    if (event.target === el.resultadosOverlay) cerrarResultados();
+  });
+
   el.declineDrawBtn.addEventListener('click', async () => {
     if (!room) return;
     const respuesta = await O.declineDraw(room.code);
@@ -3039,6 +3148,13 @@
   el.moveLiveBtn.addEventListener('click', () => fijarVista(null));
 
   document.addEventListener('keydown', (event) => {
+    if (!el.resultadosOverlay.hidden) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        cerrarResultados();
+      }
+      return;
+    }
     if (el.gameScreen.hidden || !room) return;
     if (event.altKey || event.ctrlKey || event.metaKey) return;
     const destino = event.target;

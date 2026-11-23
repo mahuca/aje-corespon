@@ -10,7 +10,7 @@
 | Instalar | `npm install` |
 | Servidor | `npm start` → `http://localhost:3001/corespon` |
 | Auto-reload | `npm run dev` |
-| Tests (140) | `npm test` |
+| Tests (142) | `npm test` |
 | Un solo test | `cd corespon && node --test --test-name-pattern="vuelta" tests/server.test.js` |
 | Crear roster en Postgres | `npm run init-db` (opcional: se crea solo al arrancar) |
 | Liveness / readiness | `curl /healthz` (no toca BD) · `curl /api/status` (sí toca BD) |

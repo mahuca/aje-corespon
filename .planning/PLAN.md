@@ -25,7 +25,7 @@ revancha. El roster fijo son 6 jugadores y **Abuelo es administrador**.
 - [x] A6. Carga de `.env` sin dependencias y `BASE_URL` documentada.
 - [x] A7. Tests migrados a `node:test` (40 en verde) + integración con sockets.
 
-Verificación: `npm test` (140 pruebas, incluidas las de PostgreSQL con pg-mem).
+Verificación: `npm test` (142 pruebas, incluidas las de PostgreSQL con pg-mem).
 
 ## Fase B — Resultados, clasificación y revancha (completada)
 
@@ -109,7 +109,7 @@ Verificación: `npm test` (140 pruebas, incluidas las de PostgreSQL con pg-mem).
 ## Cómo ejecutar
 
 ```bash
-npm test                 # 140 pruebas
+npm test                 # 142 pruebas
 npm start                # http://localhost:3001/corespon
 npm run init-db          # alta de los 6 jugadores (Abuelo administrador)
 ```

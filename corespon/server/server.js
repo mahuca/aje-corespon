@@ -915,6 +915,57 @@ function createServer(options = {}) {
     }
   });
 
+  /*
+   * Historial de partidas terminadas de un jugador, desde su perspectiva.
+   * Es público: los resultados ya se pueden ver en la clasificación.
+   */
+  app.get('/api/resultados', async (req, res) => {
+    try {
+      const jugador = typeof req.query.jugador === 'string'
+        ? req.query.jugador.trim() : '';
+      if (!jugador) {
+        return res.status(400).json({ ok: false, error: 'Falta el nombre del jugador' });
+      }
+
+      const normalizar = (nombre) => String(nombre || '').trim().toLowerCase();
+      const buscado = normalizar(jugador);
+      const resultados = await store.getResultados();
+
+      const partidas = resultados
+        .filter(r => normalizar(r.blancas) === buscado
+          || normalizar(r.negras) === buscado)
+        .map(r => {
+          const esBlancas = normalizar(r.blancas) === buscado;
+          const color = esBlancas ? 'blancas' : 'negras';
+          let resultado;
+          if (r.resultado === 'tablas') resultado = 'tablas';
+          else if (r.resultado === color) resultado = 'victoria';
+          else resultado = 'derrota';
+          return {
+            rival: esBlancas ? r.negras : r.blancas,
+            color,
+            resultado,
+            terminadoEn: r.terminadoEn
+          };
+        })
+        .sort((a, b) => new Date(b.terminadoEn) - new Date(a.terminadoEn));
+
+      res.json({
+        ok: true,
+        jugador,
+        partidas,
+        resumen: {
+          total: partidas.length,
+          victorias: partidas.filter(p => p.resultado === 'victoria').length,
+          tablas: partidas.filter(p => p.resultado === 'tablas').length,
+          derrotas: partidas.filter(p => p.resultado === 'derrota').length
+        }
+      });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
   // ============================ TORNEO ============================
 
   // Formato: round-robin (todos contra todos) con 2 partidas por pareja.

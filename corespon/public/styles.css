@@ -929,6 +929,47 @@ input:focus {
   .confirm-actions .btn { width: 100%; }
 }
 
+/* ==================== RESULTADOS POR JUGADOR ==================== */
+.resultados-card {
+  width: min(100%, 560px);
+  max-height: min(80vh, 620px);
+  overflow: auto;
+  padding: 22px;
+  background: #202a33;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+}
+.resultados-card h2 {
+  margin: 0 0 6px;
+  font-family: var(--serif);
+  font-size: 1.45rem;
+  font-weight: 500;
+}
+.resultados-resumen {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+.resultados-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.resultados-table th, .resultados-table td {
+  padding: 9px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.resultados-table th {
+  background: rgba(255,255,255,0.06);
+  color: var(--accent);
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.resultados-table td { color: var(--muted-2); }
+.resultados-table .resultado-victoria { color: var(--ok); }
+.resultados-table .resultado-derrota { color: var(--danger); }
+.resultados-table .resultado-tablas { color: var(--muted); }
+.clasificacion-table .resultados-btn { white-space: nowrap; }
+
 /* ==================== ESTADO ==================== */
 .game-status {
   width: var(--board-size);

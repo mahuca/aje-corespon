@@ -391,6 +391,19 @@
     </div>
   </div>
 
+  <!-- Historial de partidas terminadas de un jugador de la clasificación. -->
+  <div id="resultadosOverlay" class="confirm-overlay" hidden>
+    <div class="resultados-card" role="dialog" aria-modal="true"
+         aria-labelledby="resultadosTitle" aria-describedby="resultadosResumen">
+      <h2 id="resultadosTitle">Resultados</h2>
+      <p id="resultadosResumen" class="resultados-resumen"></p>
+      <div id="resultadosContenido" class="resultados-contenido"></div>
+      <div class="confirm-actions">
+        <button id="resultadosCloseBtn" class="btn btn-primary" type="button">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script src="/socket.io/socket.io.js"></script>
